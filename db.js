@@ -22,9 +22,7 @@ function defaultData() {
       leadMinutes: 15
     },
     notifiedLog: [],
-    japanese: {
-      weeks: []       // {id, weekNumber, title, objective, level, uploadedAt, rawText, days:[{id,num,title,theory,notaImportante,activity,test,characters:[{char,romaji}],lessonDone,testDone}]}
-    }
+    programs: {}            // { [goalId]: { weeks:[{id,weekNumber,title,objective,level,uploadedAt,rawText,days:[{id,num,title,theory,notaImportante,activity,test,characters:[{char,romaji}],lessonDone,testDone}]}] } } — objetivos tipo "programa" (japonés, piano, lo que sea)
   };
 }
 
@@ -71,6 +69,23 @@ function load() {
       _cache._migratedExerciseLogCount = true;
       save();
     }
+    // migración única: el viejo objetivo "japonés" (global, un solo programa para toda la app) pasa a
+    // ser un objetivo de tipo "programa" con sus propias semanas, igual que cualquier otro programa nuevo
+    if (_cache.japanese && !_cache._migratedPrograms) {
+      if (!_cache.programs) _cache.programs = {};
+      const oldWeeks = _cache.japanese.weeks || [];
+      const jGoal = _cache.goals.find(g => g.type === 'japanese');
+      if (jGoal) {
+        jGoal.type = 'programa';
+        _cache.programs[jGoal.id] = { weeks: oldWeeks };
+      }
+      delete _cache.japanese;
+      _cache._migratedPrograms = true;
+      save();
+    }
+    if (!_cache.programs) _cache.programs = {};
+    // por si quedó algún objetivo viejo tipo "japanese" sin semanas asociadas
+    _cache.goals.forEach(g => { if (g.type === 'japanese') g.type = 'programa'; });
   } catch (e) {
     console.error('Error leyendo datos, se usa un estado nuevo', e);
     _cache = defaultData();
@@ -227,6 +242,7 @@ const Goals = {
     const data = load();
     data.goals = data.goals.filter(g => g.id !== id);
     data.todos.forEach(t => { if (t.linkedGoalId === id) t.linkedGoalId = null; });
+    if (data.programs) delete data.programs[id];
     save();
   },
   markHabitDone: (id) => {
@@ -305,12 +321,19 @@ const NotifiedLog = {
   }
 };
 
-// ---------- Japonés (programa semanal + caracteres) ----------
-const Japanese = {
-  weeks: () => load().japanese.weeks,
-  getWeek: (id) => load().japanese.weeks.find(w => w.id === id),
-  addWeek: (week) => {
+// ---------- Programas (objetivo tipo "programa": subís un .md por semana, sirve para cualquier tema — japonés, piano, etc.) ----------
+// Cada objetivo (goal) de tipo "programa" tiene su propio set de semanas, guardado por goalId.
+const Programs = {
+  _ensure: (goalId) => {
     const data = load();
+    if (!data.programs) data.programs = {};
+    if (!data.programs[goalId]) data.programs[goalId] = { weeks: [] };
+    return data.programs[goalId];
+  },
+  weeks: (goalId) => Programs._ensure(goalId).weeks,
+  getWeek: (goalId, weekId) => Programs._ensure(goalId).weeks.find(w => w.id === weekId),
+  addWeek: (goalId, week) => {
+    const prog = Programs._ensure(goalId);
     const w = {
       id: uid(),
       weekNumber: week.weekNumber ?? null,
@@ -333,29 +356,37 @@ const Japanese = {
       }))
     };
     // orden: más reciente (por número de semana, si no hay número por fecha de carga) primero
-    data.japanese.weeks.unshift(w);
+    prog.weeks.unshift(w);
     save();
     return w;
   },
-  removeWeek: (id) => {
-    const data = load();
-    data.japanese.weeks = data.japanese.weeks.filter(w => w.id !== id);
+  removeWeek: (goalId, weekId) => {
+    const prog = Programs._ensure(goalId);
+    prog.weeks = prog.weeks.filter(w => w.id !== weekId);
     save();
   },
-  toggleDay: (weekId, dayId, field) => { // field: 'lessonDone' | 'testDone'
-    const data = load();
-    const w = data.japanese.weeks.find(x => x.id === weekId);
+  toggleDay: (goalId, weekId, dayId, field) => { // field: 'lessonDone' | 'testDone'
+    const prog = Programs._ensure(goalId);
+    const w = prog.weeks.find(x => x.id === weekId);
     if (!w) return;
     const d = w.days.find(x => x.id === dayId);
     if (!d) return;
     d[field] = !d[field];
     save();
   },
-  // Set de caracteres (string) que ya aparecieron en algún archivo subido
-  learnedChars: () => {
+  // Set de caracteres (string) que ya aparecieron en algún archivo subido de este programa (aplica a programas de idiomas, ej. japonés)
+  learnedChars: (goalId) => {
     const set = new Set();
-    load().japanese.weeks.forEach(w => w.days.forEach(d => (d.characters || []).forEach(c => set.add(c.char))));
+    Programs.weeks(goalId).forEach(w => w.days.forEach(d => (d.characters || []).forEach(c => set.add(c.char))));
     return set;
+  },
+  // Si alguna semana de este programa trajo caracteres (ej. japonés), la app muestra la pestaña "Caracteres";
+  // si nunca trajo (ej. piano), esa pestaña queda oculta para ese objetivo.
+  hasCharacters: (goalId) => Programs.weeks(goalId).some(w => w.days.some(d => (d.characters || []).length)),
+  remove: (goalId) => {
+    const data = load();
+    if (data.programs) delete data.programs[goalId];
+    save();
   }
 };
 
@@ -405,4 +436,4 @@ const Backup = {
 };
 
 window.DB = { load, save, uid, toISODate, todayISO, dayKeyFromDate, DIAS, DIAS_LARGO,
-  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Japanese, seedDefinicionRoutines, ExerciseLog, parseSetsCount };
+  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Programs, seedDefinicionRoutines, ExerciseLog, parseSetsCount };

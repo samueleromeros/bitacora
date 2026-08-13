@@ -6,10 +6,11 @@ App 100% privada: no tiene login, no manda nada a ningún servidor. Todo (rutina
 - **Hoy**: la rutina de entrenamiento del día, tus tareas de hoy y objetivos próximos.
 - **Calendario**: vista mensual con puntos que indican entrenamiento (verde), tareas (dorado) y vencimientos de objetivos (gris). Tocás un día para ver el detalle y cambiar la rutina asignada solo para esa fecha.
 - **Rutinas**: creás tus rutinas (nombre, color, ejercicios con series/repeticiones) y las asignás a un horario semanal (ej: lunes = Empuje).
-- **Objetivos**: tres tipos que se adaptan automáticamente —
+- **Objetivos**: cuatro tipos que se adaptan automáticamente —
   - *Progreso numérico* (ej: correr 10km, bajar 3kg): barra de progreso.
   - *Hábito diario* (ej: meditar): racha de días seguidos.
   - *Lista de pasos* (ej: planear un viaje): checklist con % completado.
+  - *Programa* (ej: japonés, piano, cualquier curso semanal): subís el archivo `.md` que te genera Claude con la lección de la semana, y la app lo secciona por semanas y días, con checklist de lección/prueba. Si el archivo trae caracteres (como en un curso de idiomas), aparece además una pestaña para repasar Hiragana/Katakana/Kanji. Cada objetivo de tipo Programa guarda sus propias semanas por separado, así que podés tener japonés, piano, etc. a la vez sin que se mezclen.
 - **Tareas**: lista completa con filtros (pendientes / hechas / todas), con fecha, hora y recordatorio opcional.
 - **Ajustes** (ícono ⚙ arriba a la derecha): activar recordatorios, elegir con cuánta anticipación avisar, exportar/importar copia de seguridad, borrar todo.
 

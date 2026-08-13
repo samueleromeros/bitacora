@@ -82,13 +82,13 @@
       <div id="goals-list"></div>
     </section>
 
-    <!-- JAPONÉS (se abre desde el objetivo "Japonés") -->
-    <section class="view" id="view-japones">
+    <!-- PROGRAMA (se abre desde cualquier objetivo de tipo "Programa": japonés, piano, etc.) -->
+    <section class="view" id="view-programa">
       <button class="btn btn-ghost btn-sm" id="jp-back" style="width:auto;margin-bottom:16px;">‹ Volver a Objetivos</button>
 
       <div class="chip-row" id="jp-main-tabs" style="margin-bottom:18px;">
         <button class="chip active" data-jptab="programa">Programa</button>
-        <button class="chip" data-jptab="caracteres">Caracteres</button>
+        <button class="chip" id="jp-char-tab-btn" data-jptab="caracteres" style="display:none;">Caracteres</button>
       </div>
 
       <div id="jp-programa-panel">
@@ -156,7 +156,7 @@
 
 <script src="db.js"></script>
 <script src="japanese-data.js"></script>
-<script src="japanese.js"></script>
+<script src="programs.js"></script>
 <script src="notifications.js"></script>
 <script src="app.js"></script>
 </body>

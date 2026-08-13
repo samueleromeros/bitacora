@@ -44,10 +44,10 @@ function switchView(view) {
   document.getElementById('view-' + view).classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
 
-  const titles = { hoy: 'Hoy', calendario: 'Calendario', rutinas: 'Rutinas', objetivos: 'Objetivos', tareas: 'Tareas', japones: 'Japonés' };
+  const titles = { hoy: 'Hoy', calendario: 'Calendario', rutinas: 'Rutinas', objetivos: 'Objetivos', tareas: 'Tareas', programa: 'Programa' };
   document.getElementById('header-title').textContent = titles[view];
   document.getElementById('header-eyebrow').textContent = 'bitácora';
-  document.getElementById('fab-add').style.display = (view === 'japones') ? 'none' : '';
+  document.getElementById('fab-add').style.display = (view === 'programa') ? 'none' : '';
 
   renderAll();
 }
@@ -278,10 +278,11 @@ function todoRowHTML(t) {
 }
 
 function goalCardHTML(g) {
-  const typeLabel = { numeric: 'Progreso', habit: 'Hábito', checklist: 'Lista', japanese: 'Idioma' }[g.type];
-  if (g.type === 'japanese') {
-    const weeks = DB.Japanese.weeks();
-    const learned = DB.Japanese.learnedChars();
+  const typeLabel = { numeric: 'Progreso', habit: 'Hábito', checklist: 'Lista', programa: 'Programa' }[g.type];
+  if (g.type === 'programa') {
+    const weeks = DB.Programs.weeks(g.id);
+    const hasChars = DB.Programs.hasCharacters(g.id);
+    const learned = hasChars ? DB.Programs.learnedChars(g.id) : null;
     return `<div class="card goal-card">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;">
         <div style="flex:1;min-width:0;">
@@ -294,8 +295,8 @@ function goalCardHTML(g) {
         </div>
       </div>
       ${g.description ? `<p class="goal-desc">${esc(g.description)}</p>` : ''}
-      <div class="ti-meta">${weeks.length} semana${weeks.length===1?'':'s'} cargada${weeks.length===1?'':'s'} · ${learned.size} caracteres aprendidos</div>
-      <button class="btn btn-primary" style="margin-top:12px;" data-action="open-japones">Abrir programa de japonés</button>
+      <div class="ti-meta">${weeks.length} semana${weeks.length===1?'':'s'} cargada${weeks.length===1?'':'s'}${hasChars ? ` · ${learned.size} caracteres aprendidos` : ''}</div>
+      <button class="btn btn-primary" style="margin-top:12px;" data-action="open-programa" data-id="${g.id}">Abrir programa</button>
     </div>`;
   }
   let inner = '';
@@ -487,7 +488,7 @@ function renderAll() {
   renderRutinas();
   renderObjetivos();
   renderTareas();
-  if (typeof renderJapones === 'function') renderJapones();
+  if (typeof renderPrograma === 'function') renderPrograma();
 }
 window.addEventListener('bitacora:change', renderAll);
 
@@ -599,7 +600,7 @@ function openGoalForm(goalId) {
       <div class="field"><label>Unidad</label><input type="text" id="g-unit" value="${esc(g?.numeric.unit || '')}" placeholder="kg, km, páginas..."></div>`;
     if (type === 'habit') return `<div class="badge-note">Vas a poder marcar este objetivo como "hecho" cada día desde la vista Hoy u Objetivos, y la app te va a llevar la racha de días seguidos.</div>`;
     if (type === 'checklist') return `<div class="field"><label>Pasos (uno por línea)</label><textarea id="g-steps" rows="4" placeholder="Ej: Investigar opciones&#10;Reservar fecha&#10;Confirmar pago">${(g?.checklist.items||[]).map(i=>i.text).join('\n')}</textarea></div>`;
-    if (type === 'japanese') return `<div class="badge-note">Este objetivo abre una sección propia donde vas a poder subir el archivo semanal que te genera Claude (lección + prueba) y revisar Hiragana, Katakana y Kanji por pestañas.</div>`;
+    if (type === 'programa') return `<div class="badge-note">Este objetivo abre una sección propia donde vas a poder subir, semana a semana, el archivo .md que te genera Claude con tu programa (lección + prueba). Sirve para cualquier tema: japonés, piano, lo que estés siguiendo. Si el archivo trae caracteres (como en japonés), además vas a poder revisarlos por pestañas.</div>`;
     return '';
   }
 
@@ -610,7 +611,7 @@ function openGoalForm(goalId) {
         <button type="button" class="chip ${type==='numeric'?'active':''}" data-type="numeric">Progreso numérico</button>
         <button type="button" class="chip ${type==='habit'?'active':''}" data-type="habit">Hábito diario</button>
         <button type="button" class="chip ${type==='checklist'?'active':''}" data-type="checklist">Lista de pasos</button>
-        <button type="button" class="chip ${type==='japanese'?'active':''}" data-type="japanese">Japonés (programa)</button>
+        <button type="button" class="chip ${type==='programa'?'active':''}" data-type="programa">Programa</button>
       </div>
     </div>
     <div class="field"><label>Título</label><input type="text" id="g-title" value="${esc(g?.title||'')}" placeholder="Ej: Correr 10km"></div>
@@ -792,7 +793,8 @@ document.addEventListener('click', (e) => {
   else if (action === 'edit-todo') openTodoForm(id);
   else if (action === 'delete-todo') { if (confirm('¿Eliminar esta tarea?')) DB.Todos.remove(id); }
   else if (action === 'edit-goal') openGoalForm(id);
-  else if (action === 'delete-goal') { if (confirm('¿Eliminar este objetivo?')) DB.Goals.remove(id); }
+  else if (action === 'delete-goal') { if (confirm('¿Eliminar este objetivo? Si es de tipo Programa, también se borran las semanas que subiste para él.')) DB.Goals.remove(id); }
+  else if (action === 'open-programa') { if (typeof openPrograma === 'function') openPrograma(id); }
   else if (action === 'habit-done') DB.Goals.markHabitDone(id);
   else if (action === 'toggle-checklist-item') {
     const g = DB.Goals.get(el.dataset.goal);

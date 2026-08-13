@@ -1,12 +1,12 @@
 // sw.js — Service worker: guarda la app para uso offline y muestra notificaciones.
-const CACHE_NAME = 'bitacora-v3';
+const CACHE_NAME = 'bitacora-v4';
 const SHELL = [
   './',
   './index.html',
   './style.css',
   './db.js',
   './japanese-data.js',
-  './japanese.js',
+  './programs.js',
   './notifications.js',
   './app.js',
   './manifest.json',
