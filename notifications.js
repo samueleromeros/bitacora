@@ -65,14 +65,14 @@ const Notifs = (() => {
       }
     });
 
-    // Rutina(s) del día: aviso una vez a la mañana (o al abrir si es la primera vez del día)
+    // Ejercicios de hoy: aviso una vez a la mañana (o al abrir si es la primera vez del día)
     const todayISO = DB.todayISO();
-    const dayAssign = DB.Schedule.routinesForDate(todayISO);
-    if (Array.isArray(dayAssign) && dayAssign.length) {
-      const names = dayAssign.map(id => DB.Routines.get(id)?.name).filter(Boolean);
+    const dayAssign = DB.Schedule.exercisesForDate(todayISO);
+    if (!dayAssign.rest && dayAssign.items.length) {
+      const routineNames = Array.from(new Set(dayAssign.items.map(i => i.routine.name)));
       const key = `routine:${todayISO}`;
-      if (names.length && !DB.NotifiedLog.has(key)) {
-        Notifs.fire('Entrenamiento de hoy', names.join(' + '), key);
+      if (!DB.NotifiedLog.has(key)) {
+        Notifs.fire('Entrenamiento de hoy', routineNames.join(' + '), key);
         DB.NotifiedLog.add(key);
       }
     }

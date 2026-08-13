@@ -78,10 +78,10 @@ function renderHoy() {
   document.getElementById('hoy-date-big').textContent = DOW_MON_LONG[(d.getDay() + 6) % 7];
   document.getElementById('hoy-date-sub').textContent = fmtLongDate(iso);
 
-  // Rutina(s) del día — puede haber varias, separadas por tipo
-  const dayAssign = resolveDayAssignment(iso);
+  // Ejercicios de hoy — pueden venir de varias rutinas/tipos distintos
+  const dayAssign = DB.Schedule.exercisesForDate(iso);
   const routineBox = document.getElementById('hoy-routine');
-  routineBox.innerHTML = renderRoutinesForDay(dayAssign);
+  routineBox.innerHTML = renderExercisesForDay(dayAssign);
 
   // Tareas de hoy
   const todos = DB.Todos.byDate(iso).sort((a,b) => (a.time||'99:99').localeCompare(b.time||'99:99'));
@@ -108,12 +108,14 @@ function renderHoy() {
   else streakEl.style.display = 'none';
 }
 
-// Convierte lo que devuelve DB.Schedule.routinesForDate en {rest, routines[]} (filtrando rutinas borradas)
-function resolveDayAssignment(iso) {
-  const assign = DB.Schedule.routinesForDate(iso);
-  if (assign === 'rest') return { rest: true, routines: [] };
-  const routines = (assign || []).map(id => DB.Routines.get(id)).filter(Boolean);
-  return { rest: false, routines };
+// Agrupa una lista de {routine, exercise} por rutina, preservando el orden de aparición
+function groupItemsByRoutine(items) {
+  const map = new Map();
+  items.forEach(({ routine, exercise }) => {
+    if (!map.has(routine.id)) map.set(routine.id, { routine, exercises: [] });
+    map.get(routine.id).exercises.push(exercise);
+  });
+  return Array.from(map.values());
 }
 
 function restDayCardHTML() {
@@ -123,23 +125,30 @@ function restDayCardHTML() {
   </div>`;
 }
 
-function routineCardHTML(r) {
+function formatDays(days) {
+  if (!days || !days.length) return '';
+  return days.map(dk => DOW_MON_LABEL[DOW_MON_FIRST.indexOf(dk)]).join('/');
+}
+
+// exercises: lista de ejercicios a mostrar (ya filtrados a un día si corresponde); showDays: si mostrar los días asignados a cada uno
+function routineCardHTML(r, exercises, showDays) {
   const t = tipoInfo(r.tipo);
+  const list = exercises || r.exercises;
   return `<div class="card routine-card" style="--accent:${r.color}">
     <div class="rc-body">
       <span class="goal-type-badge" style="margin-bottom:6px;">${esc(t.label)}</span>
       <h3>${esc(r.name)}</h3>
-      ${r.exercises.map(ex => `<div class="exercise-row"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}</span></div>`).join('') || '<div class="exercise-row"><span>Sin ejercicios cargados</span></div>'}
+      ${list.map(ex => `<div class="exercise-row"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}${showDays && ex.days && ex.days.length ? ' · ' + esc(formatDays(ex.days)) : ''}</span></div>`).join('') || '<div class="exercise-row"><span>Sin ejercicios cargados</span></div>'}
     </div>
   </div>`;
 }
 
-function renderRoutinesForDay(dayAssign) {
+function renderExercisesForDay(dayAssign) {
   if (dayAssign.rest) return restDayCardHTML();
-  if (!dayAssign.routines.length) {
-    return emptyStateHTML('No asignaste entrenamiento para este día', 'Definilo en la pestaña Rutinas');
+  if (!dayAssign.items.length) {
+    return emptyStateHTML('No tenés ejercicios asignados para hoy', 'Asignale un día a cada ejercicio en Rutinas');
   }
-  return dayAssign.routines.map(routineCardHTML).join('');
+  return groupItemsByRoutine(dayAssign.items).map(g => routineCardHTML(g.routine, g.exercises, false)).join('');
 }
 
 function emptyStateHTML(title, hint) {
@@ -235,13 +244,16 @@ function renderCalendario() {
     const iso = DB.toISODate(cellDate);
     const outside = cellDate.getMonth() !== cursor.getMonth();
 
-    const dayAssign = resolveDayAssignment(iso);
+    const dayAssign = DB.Schedule.exercisesForDate(iso);
     const hasTodo = DB.Todos.byDate(iso).some(t => !t.done);
     const hasGoal = DB.Goals.all().some(g => g.targetDate === iso);
 
     const dots = [];
     if (dayAssign.rest) dots.push('<span class="dot" style="background:var(--text-muted)"></span>');
-    else dayAssign.routines.slice(0, 3).forEach(r => dots.push(`<span class="dot" style="background:${tipoInfo(r.tipo).color}"></span>`));
+    else {
+      const tiposHoy = Array.from(new Set(dayAssign.items.map(i => i.routine.tipo)));
+      tiposHoy.slice(0, 3).forEach(tk => dots.push(`<span class="dot" style="background:${tipoInfo(tk).color}"></span>`));
+    }
     if (hasTodo) dots.push('<span class="dot gold"></span>');
     if (hasGoal) dots.push('<span class="dot text-muted"></span>');
 
@@ -256,20 +268,34 @@ function renderCalendario() {
 
 function renderDayDetail() {
   const iso = State.selectedDay;
-  const dayAssign = resolveDayAssignment(iso);
+  const dayAssign = DB.Schedule.exercisesForDate(iso);
   const todos = DB.Todos.byDate(iso);
   const goals = DB.Goals.all().filter(g => g.targetDate === iso);
+  const isRest = dayAssign.rest;
 
-  let routineLabel = 'Sin asignar';
-  if (dayAssign.rest) routineLabel = 'Descanso';
-  else if (dayAssign.routines.length) routineLabel = dayAssign.routines.map(r => `${esc(r.name)} (${esc(tipoInfo(r.tipo).label)})`).join(' + ');
+  let trainingBlock;
+  if (isRest) {
+    trainingBlock = `<div class="card" style="display:flex;justify-content:space-between;align-items:center;">
+      <div><div style="font-size:13px;color:var(--text-muted);">Entrenamiento</div><div style="margin-top:2px;">Descanso</div></div>
+      <button class="btn btn-ghost btn-sm" data-action="toggle-day-rest" data-iso="${iso}">Quitar descanso</button>
+    </div>`;
+  } else {
+    const groups = groupItemsByRoutine(dayAssign.items);
+    trainingBlock = `<div class="card" style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;color:var(--text-muted);">Entrenamiento</div>
+        ${groups.length
+          ? groups.map(g => `<div style="margin-top:8px;"><strong style="color:${g.routine.color}">${esc(g.routine.name)}</strong><div class="ti-meta" style="margin-top:2px;">${g.exercises.map(e => esc(e.name)).join(', ')}</div></div>`).join('')
+          : '<div style="margin-top:2px;">Sin ejercicios asignados</div>'}
+      </div>
+      <button class="btn btn-ghost btn-sm" data-action="toggle-day-rest" data-iso="${iso}" style="flex-shrink:0;">Marcar descanso</button>
+    </div>
+    <div class="badge-note" style="margin-top:8px;">Para cambiar qué ejercicios tocan este día, editá cada uno desde la pestaña Rutinas.</div>`;
+  }
 
   document.getElementById('day-detail').innerHTML = `
     <div class="section-title">${fmtLongDate(iso)}</div>
-    <div class="card" style="display:flex;justify-content:space-between;align-items:center;">
-      <div><div style="font-size:13px;color:var(--text-muted);">Entrenamiento</div><div style="margin-top:2px;">${routineLabel}</div></div>
-      <button class="btn btn-ghost btn-sm" data-action="change-day-routine" data-iso="${iso}">Cambiar</button>
-    </div>
+    ${trainingBlock}
     <div class="section-title">Tareas</div>
     ${todos.length ? todos.map(todoRowHTML).join('') : emptyStateHTML('Sin tareas este día', '')}
     ${goals.length ? `<div class="section-title">Objetivos que vencen</div>${goals.map(goalCardHTML).join('')}` : ''}
@@ -288,20 +314,14 @@ document.getElementById('cal-next').addEventListener('click', () => {
 // ================= Render: RUTINAS =================
 function renderRutinas() {
   const schedCard = document.getElementById('weekly-schedule-card');
-  const routines = DB.Routines.all();
   schedCard.innerHTML = DOW_MON_FIRST.map((key, idx) => {
-    const current = DB.Schedule.getDay(key); // 'rest' | array de ids
-    const isRest = current === 'rest';
-    const activeIds = Array.isArray(current) ? current : [];
-    return `<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px;${idx===0?'border-top:none;':''}">
+    const items = DB.Schedule.exercisesForDayKey(key);
+    const groups = groupItemsByRoutine(items);
+    return `<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:4px;${idx===0?'border-top:none;':''}">
       <div class="sr-label">${DOW_MON_LONG[idx]}</div>
-      <div class="chip-row">
-        <button type="button" class="chip ${isRest?'active':''}" data-action="week-rest" data-day="${key}">Descanso</button>
-        ${routines.map(r => {
-          const active = activeIds.includes(r.id);
-          return `<button type="button" class="chip ${active?'active':''}" data-action="week-toggle" data-day="${key}" data-id="${r.id}" style="${active?`background:${r.color}22;border-color:${r.color};color:${r.color};`:''}">${esc(r.name)} · ${esc(tipoInfo(r.tipo).label)}</button>`;
-        }).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">Creá una rutina primero</span>'}
-      </div>
+      ${groups.length
+        ? groups.map(g => `<div class="ti-meta"><strong style="color:${g.routine.color}">${esc(g.routine.name)}</strong>: ${g.exercises.map(e=>esc(e.name)).join(', ')}</div>`).join('')
+        : '<div class="ti-meta" style="color:var(--text-muted);">Sin ejercicios asignados</div>'}
     </div>`;
   }).join('');
 
@@ -311,7 +331,7 @@ function renderRutinas() {
       <div class="rc-body">
         <span class="goal-type-badge" style="margin-bottom:6px;">${esc(tipoInfo(r.tipo).label)}</span>
         <h3>${esc(r.name)}</h3>
-        ${r.exercises.map(ex => `<div class="exercise-row"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}</span></div>`).join('') || '<div class="exercise-row" style="color:var(--text-muted)"><span>Sin ejercicios</span></div>'}
+        ${r.exercises.map(ex => `<div class="exercise-row"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}${ex.days && ex.days.length ? ' · '+esc(formatDays(ex.days)) : ' · sin día'}</span></div>`).join('') || '<div class="exercise-row" style="color:var(--text-muted)"><span>Sin ejercicios</span></div>'}
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;">
         <button class="icon-btn btn-sm" style="width:30px;height:30px;" data-action="edit-routine" data-id="${r.id}">✎</button>
@@ -363,15 +383,20 @@ window.addEventListener('bitacora:change', renderAll);
 // ================= Formularios: RUTINA =================
 function openRoutineForm(routineId) {
   const r = routineId ? DB.Routines.get(routineId) : { name: '', tipo: 'fuerza', exercises: [] };
-  let exRows = (r.exercises.length ? r.exercises : [{id: DB.uid(), name:'', sets:'', reps:''}]);
+  let exRows = (r.exercises.length ? r.exercises.map(ex => ({ ...ex, days: ex.days || [] })) : [{id: DB.uid(), name:'', sets:'', reps:'', days: []}]);
 
   function exerciseRowsHTML() {
     return exRows.map((ex, i) => `
-      <div class="exercise-editor-row" data-ex-id="${ex.id}">
-        <input type="text" placeholder="Ejercicio" value="${esc(ex.name)}" data-field="name">
-        <input type="text" placeholder="Series" value="${esc(ex.sets)}" data-field="sets" style="max-width:60px;">
-        <input type="text" placeholder="Reps" value="${esc(ex.reps)}" data-field="reps" style="max-width:60px;">
-        <button class="remove-row-btn" type="button" data-remove-ex="${i}">✕</button>
+      <div class="exercise-editor-block" data-ex-id="${ex.id}" style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">
+        <div class="exercise-editor-row">
+          <input type="text" placeholder="Ejercicio" value="${esc(ex.name)}" data-field="name">
+          <input type="text" placeholder="Series" value="${esc(ex.sets)}" data-field="sets" style="max-width:60px;">
+          <input type="text" placeholder="Reps" value="${esc(ex.reps)}" data-field="reps" style="max-width:60px;">
+          <button class="remove-row-btn" type="button" data-remove-ex="${i}">✕</button>
+        </div>
+        <div class="chip-row" style="margin-top:6px;">
+          ${DOW_MON_FIRST.map((dk, di) => `<button type="button" class="chip ${(ex.days||[]).includes(dk)?'active':''}" style="padding:4px 9px;font-size:11.5px;" data-ex-day="${i}" data-day="${dk}">${DOW_MON_LABEL[di]}</button>`).join('')}
+        </div>
       </div>`).join('');
   }
 
@@ -383,14 +408,15 @@ function openRoutineForm(routineId) {
         ${TIPOS.map(t => `<button type="button" class="chip ${t.key===r.tipo?'active':''}" data-tipo="${t.key}" style="${t.key===r.tipo?`background:${t.color}22;border-color:${t.color};color:${t.color};`:''}">${esc(t.label)}</button>`).join('')}
       </div>
     </div>
-    <div class="field"><label>Ejercicios</label><div id="rt-exercises">${exerciseRowsHTML()}</div>
+    <div class="field"><label>Ejercicios</label>
+      <div class="badge-note" style="margin-bottom:10px;">Elegí en qué día (o días) de la semana hacés cada ejercicio — así aparece solo ese día en Hoy y en el Calendario.</div>
+      <div id="rt-exercises">${exerciseRowsHTML()}</div>
       <button class="btn btn-ghost btn-sm" type="button" id="rt-add-exercise">+ Agregar ejercicio</button>
     </div>
     <div class="btn-row" style="margin-top:18px;">
       <button class="btn btn-ghost" id="rt-cancel">Cancelar</button>
       <button class="btn btn-primary" id="rt-save">Guardar</button>
     </div>
-    ${routineId ? '' : ''}
   `, (root) => {
     let selectedTipo = r.tipo || 'fuerza';
     root.querySelectorAll('#rt-tipos .chip').forEach(btn => {
@@ -404,7 +430,7 @@ function openRoutineForm(routineId) {
     });
 
     function syncExFromDOM() {
-      root.querySelectorAll('.exercise-editor-row').forEach((row, i) => {
+      root.querySelectorAll('.exercise-editor-block').forEach((row, i) => {
         exRows[i].name = row.querySelector('[data-field=name]').value;
         exRows[i].sets = row.querySelector('[data-field=sets]').value;
         exRows[i].reps = row.querySelector('[data-field=reps]').value;
@@ -413,10 +439,21 @@ function openRoutineForm(routineId) {
 
     root.querySelector('#rt-add-exercise').addEventListener('click', () => {
       syncExFromDOM();
-      exRows.push({ id: DB.uid(), name: '', sets: '', reps: '' });
+      exRows.push({ id: DB.uid(), name: '', sets: '', reps: '', days: [] });
       root.querySelector('#rt-exercises').innerHTML = exerciseRowsHTML();
     });
     root.querySelector('#rt-exercises').addEventListener('click', (e) => {
+      const dayChip = e.target.closest('[data-ex-day]');
+      if (dayChip) {
+        syncExFromDOM();
+        const idx = Number(dayChip.dataset.exDay);
+        const day = dayChip.dataset.day;
+        const set = new Set(exRows[idx].days || []);
+        if (set.has(day)) set.delete(day); else set.add(day);
+        exRows[idx].days = Array.from(set);
+        root.querySelector('#rt-exercises').innerHTML = exerciseRowsHTML();
+        return;
+      }
       const btn = e.target.closest('[data-remove-ex]');
       if (!btn) return;
       syncExFromDOM();
@@ -553,46 +590,6 @@ function openTodoForm(todoId, presetDate) {
   });
 }
 
-// ================= Cambiar rutina de un día puntual =================
-function openDayRoutineChanger(iso) {
-  const routines = DB.Routines.all();
-
-  function draw(root) {
-    const current = DB.Schedule.routinesForDate(iso); // 'rest' | array
-    const isRest = current === 'rest';
-    const activeIds = Array.isArray(current) ? current : [];
-    root.querySelector('#drc-row').innerHTML = `
-      <button type="button" class="chip ${!isRest && !activeIds.length ? 'active' : ''}" data-val="clear">Quitar (usar horario semanal)</button>
-      <button type="button" class="chip ${isRest?'active':''}" data-val="rest">Descanso</button>
-      ${routines.map(r => {
-        const active = activeIds.includes(r.id);
-        return `<button type="button" class="chip ${active?'active':''}" data-val="${r.id}" style="${active?`background:${r.color}22;border-color:${r.color};color:${r.color};`:''}">${esc(r.name)} · ${esc(tipoInfo(r.tipo).label)}</button>`;
-      }).join('')}
-    `;
-  }
-
-  openModal(`
-    <h2>${fmtLongDate(iso)}</h2>
-    <div class="field"><label>Entrenamiento para este día</label>
-      <div class="badge-note" style="margin-bottom:10px;">Podés elegir varias rutinas de distinto tipo para el mismo día (ej. Fuerza + Cardio).</div>
-      <div class="chip-row" id="drc-row"></div>
-    </div>
-    <div class="btn-row" style="margin-top:18px;"><button class="btn btn-primary" id="drc-done">Listo</button></div>
-  `, (root) => {
-    draw(root);
-    root.addEventListener('click', (e) => {
-      const chip = e.target.closest('#drc-row .chip');
-      if (!chip) return;
-      const val = chip.dataset.val;
-      if (val === 'clear') DB.Schedule.clearOverride(iso);
-      else if (val === 'rest') DB.Schedule.setOverrideRest(iso, !(DB.Schedule.routinesForDate(iso) === 'rest'));
-      else DB.Schedule.toggleOverrideRoutine(iso, val);
-      draw(root);
-    });
-    root.querySelector('#drc-done').addEventListener('click', closeModal);
-  });
-}
-
 // ================= Ajustes =================
 function openSettings() {
   const s = DB.Settings.get();
@@ -694,9 +691,7 @@ document.addEventListener('click', (e) => {
   }
   else if (action === 'edit-routine') openRoutineForm(id);
   else if (action === 'delete-routine') { if (confirm('¿Eliminar esta rutina?')) DB.Routines.remove(id); }
-  else if (action === 'change-day-routine') openDayRoutineChanger(el.dataset.iso);
-  else if (action === 'week-rest') { const day = el.dataset.day; DB.Schedule.setDayRest(day, DB.Schedule.getDay(day) !== 'rest'); }
-  else if (action === 'week-toggle') DB.Schedule.toggleDayRoutine(el.dataset.day, el.dataset.id);
+  else if (action === 'toggle-day-rest') { const iso = el.dataset.iso; DB.Schedule.setOverrideRest(iso, DB.Schedule.getOverride(iso) !== 'rest'); }
 });
 
 document.addEventListener('click', (e) => {
