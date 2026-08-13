@@ -12,9 +12,9 @@ function uid() {
 function defaultData() {
   return {
     version: 1,
-    routines: [],          // {id, name, color, exercises:[{id,name,sets,reps,notes}]}
-    schedule: {},           // {mon:[routineId], tue:[routineId], ...}
-    dateOverrides: {},      // {'2026-08-15': routineId | 'rest' | null}
+    routines: [],          // {id, name, tipo, color, exercises:[{id,name,sets,reps,notes}]}
+    schedule: {},           // {mon: 'rest' | [routineId, routineId...], tue: [...], ...} — varias rutinas por día, separadas por tipo
+    dateOverrides: {},      // {'2026-08-15': 'rest' | [routineId, ...] } — pisa el horario semanal ese día puntual
     goals: [],              // {id, title, type, description, targetDate, numeric:{}, habit:{}, checklist:{}}
     todos: [],               // {id, title, date, time, done, reminder, notified}
     settings: {
@@ -35,6 +35,8 @@ function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     _cache = raw ? Object.assign(defaultData(), JSON.parse(raw)) : defaultData();
+    // migración: rutinas viejas sin tipo asignado
+    _cache.routines.forEach(r => { if (!r.tipo) r.tipo = 'fuerza'; });
   } catch (e) {
     console.error('Error leyendo datos, se usa un estado nuevo', e);
     _cache = defaultData();
@@ -68,7 +70,7 @@ const Routines = {
   get: (id) => load().routines.find(r => r.id === id),
   add: (routine) => {
     const data = load();
-    const r = { id: uid(), name: routine.name, color: routine.color || '#9CAF88', exercises: routine.exercises || [] };
+    const r = { id: uid(), name: routine.name, tipo: routine.tipo || 'fuerza', color: routine.color || '#9CAF88', exercises: routine.exercises || [] };
     data.routines.push(r);
     save();
     return r;
@@ -83,34 +85,58 @@ const Routines = {
   remove: (id) => {
     const data = load();
     data.routines = data.routines.filter(r => r.id !== id);
-    // limpiar referencias
+    // limpiar referencias (respetando 'rest' como valor especial no-lista)
     Object.keys(data.schedule).forEach(day => {
-      data.schedule[day] = (data.schedule[day] || []).filter(rid => rid !== id);
+      if (Array.isArray(data.schedule[day])) data.schedule[day] = data.schedule[day].filter(rid => rid !== id);
     });
     Object.keys(data.dateOverrides).forEach(date => {
-      if (data.dateOverrides[date] === id) delete data.dateOverrides[date];
+      if (Array.isArray(data.dateOverrides[date])) data.dateOverrides[date] = data.dateOverrides[date].filter(rid => rid !== id);
     });
     save();
   }
 };
 
 // ---------- Horario (semanal + overrides puntuales) ----------
+// Un día puede tener: 'rest' (descanso, excluyente) o una lista de ids de rutina (0, 1 o varias, de distinto tipo)
 const Schedule = {
-  setDay: (dayKey, routineId) => {
+  getDay: (dayKey) => load().schedule[dayKey] ?? [],
+  setDayRest: (dayKey, isRest) => {
     const data = load();
-    data.schedule[dayKey] = routineId ? [routineId] : [];
+    data.schedule[dayKey] = isRest ? 'rest' : [];
     save();
   },
-  getDay: (dayKey) => (load().schedule[dayKey] || [])[0] || null,
-  setOverride: (isoDate, value) => { // value: routineId | 'rest' | null(=quitar override)
+  toggleDayRoutine: (dayKey, routineId) => {
     const data = load();
-    if (value === null) delete data.dateOverrides[isoDate];
-    else data.dateOverrides[isoDate] = value;
+    let cur = data.schedule[dayKey];
+    cur = Array.isArray(cur) ? cur.slice() : [];
+    const idx = cur.indexOf(routineId);
+    if (idx >= 0) cur.splice(idx, 1); else cur.push(routineId);
+    data.schedule[dayKey] = cur;
     save();
   },
   getOverride: (isoDate) => load().dateOverrides[isoDate],
-  // Devuelve el id de rutina para una fecha, o 'rest', o null si no hay nada asignado
-  routineForDate: (isoDate) => {
+  setOverrideRest: (isoDate, isRest) => {
+    const data = load();
+    if (isRest) data.dateOverrides[isoDate] = 'rest';
+    else delete data.dateOverrides[isoDate];
+    save();
+  },
+  toggleOverrideRoutine: (isoDate, routineId) => {
+    const data = load();
+    let cur = data.dateOverrides[isoDate];
+    cur = Array.isArray(cur) ? cur.slice() : [];
+    const idx = cur.indexOf(routineId);
+    if (idx >= 0) cur.splice(idx, 1); else cur.push(routineId);
+    data.dateOverrides[isoDate] = cur;
+    save();
+  },
+  clearOverride: (isoDate) => {
+    const data = load();
+    delete data.dateOverrides[isoDate];
+    save();
+  },
+  // Devuelve 'rest' o un array de ids de rutina (posiblemente vacío) para una fecha dada
+  routinesForDate: (isoDate) => {
     const data = load();
     if (Object.prototype.hasOwnProperty.call(data.dateOverrides, isoDate)) {
       return data.dateOverrides[isoDate];
@@ -284,6 +310,34 @@ const Japanese = {
   }
 };
 
+// ---------- Semilla inicial: rutina de definición en casa ----------
+function seedDefinicionRoutines() {
+  const data = load();
+  if (data.routines.length) return; // ya hay rutinas, no tocar nada
+  const TIPO_COLORS = { fuerza: '#9CAF88', cardio: '#C2665A', core: '#7FA0C9', movilidad: '#B487C2', otro: '#D4A73C' };
+  const mk = (name, tipo, exercises) => ({ id: uid(), name, tipo, color: TIPO_COLORS[tipo], exercises: exercises.map(e => ({ id: uid(), name: e[0], sets: e[1], reps: e[2] })) });
+  data.routines.push(
+    mk('Tren Superior', 'fuerza', [
+      ['Flexiones', '4', '10-15'], ['Fondos en silla', '3', '12'], ['Pike push-ups', '3', '10'],
+      ['Plancha con toque de hombro', '3', '20 seg'], ['Superman', '3', '15']
+    ]),
+    mk('Tren Inferior', 'fuerza', [
+      ['Sentadillas', '4', '15'], ['Zancadas alternas', '3', '12 c/pierna'], ['Puente de glúteo', '3', '15'],
+      ['Elevación de talones', '3', '20'], ['Sentadilla isométrica', '3', '30 seg']
+    ]),
+    mk('Cardio / HIIT', 'cardio', [
+      ['Jumping jacks', '5-6', '30 seg'], ['Burpees', '5-6', '30 seg'], ['Mountain climbers', '5-6', '30 seg'], ['High knees', '5-6', '30 seg']
+    ]),
+    mk('Core', 'core', [
+      ['Plancha', '3', '30-45 seg'], ['Crunch bicicleta', '3', '20'], ['Elevación de piernas', '3', '12'], ['Plancha lateral', '3', '20 seg c/lado']
+    ]),
+    mk('Full body ligero', 'movilidad', [
+      ['Circuito suave (repetir ejercicios de arriba, baja intensidad)', '1', '15-20 min']
+    ])
+  );
+  save();
+}
+
 // ---------- Backup ----------
 const Backup = {
   export: () => JSON.stringify(load(), null, 2),
@@ -299,4 +353,4 @@ const Backup = {
 };
 
 window.DB = { load, save, uid, toISODate, todayISO, dayKeyFromDate, DIAS, DIAS_LARGO,
-  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Japanese };
+  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Japanese, seedDefinicionRoutines };

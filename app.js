@@ -5,7 +5,14 @@ const MESES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto'
 const DOW_MON_FIRST = ['lun','mar','mie','jue','vie','sab','dom'];
 const DOW_MON_LABEL = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
 const DOW_MON_LONG = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
-const ROUTINE_COLORS = ['#9CAF88', '#D4A73C', '#C2665A', '#7FA0C9', '#B487C2'];
+const TIPOS = [
+  { key: 'fuerza', label: 'Fuerza', color: '#9CAF88' },
+  { key: 'cardio', label: 'Cardio', color: '#C2665A' },
+  { key: 'core', label: 'Core', color: '#7FA0C9' },
+  { key: 'movilidad', label: 'Movilidad', color: '#B487C2' },
+  { key: 'otro', label: 'Otro', color: '#D4A73C' }
+];
+function tipoInfo(key) { return TIPOS.find(t => t.key === key) || TIPOS[TIPOS.length - 1]; }
 
 const State = {
   view: 'hoy',
@@ -71,10 +78,10 @@ function renderHoy() {
   document.getElementById('hoy-date-big').textContent = DOW_MON_LONG[(d.getDay() + 6) % 7];
   document.getElementById('hoy-date-sub').textContent = fmtLongDate(iso);
 
-  // Rutina
-  const routineId = DB.Schedule.routineForDate(iso);
+  // Rutina(s) del día — puede haber varias, separadas por tipo
+  const dayAssign = resolveDayAssignment(iso);
   const routineBox = document.getElementById('hoy-routine');
-  routineBox.innerHTML = renderRoutineForDay(routineId);
+  routineBox.innerHTML = renderRoutinesForDay(dayAssign);
 
   // Tareas de hoy
   const todos = DB.Todos.byDate(iso).sort((a,b) => (a.time||'99:99').localeCompare(b.time||'99:99'));
@@ -101,24 +108,38 @@ function renderHoy() {
   else streakEl.style.display = 'none';
 }
 
-function renderRoutineForDay(routineId) {
-  if (!routineId) {
-    return emptyStateHTML('No asignaste rutina para este día', 'Definila en la pestaña Rutinas');
-  }
-  if (routineId === 'rest') {
-    return `<div class="card" style="border-left:3px solid var(--gold);">
-      <h3 style="font-family:var(--font-display);margin:0;">Día de descanso</h3>
-      <p style="color:var(--text-muted);font-size:13.5px;margin:6px 0 0;">Aprovechá para recuperar.</p>
-    </div>`;
-  }
-  const r = DB.Routines.get(routineId);
-  if (!r) return emptyStateHTML('Esa rutina ya no existe', '');
+// Convierte lo que devuelve DB.Schedule.routinesForDate en {rest, routines[]} (filtrando rutinas borradas)
+function resolveDayAssignment(iso) {
+  const assign = DB.Schedule.routinesForDate(iso);
+  if (assign === 'rest') return { rest: true, routines: [] };
+  const routines = (assign || []).map(id => DB.Routines.get(id)).filter(Boolean);
+  return { rest: false, routines };
+}
+
+function restDayCardHTML() {
+  return `<div class="card" style="border-left:3px solid var(--gold);">
+    <h3 style="font-family:var(--font-display);margin:0;">Día de descanso</h3>
+    <p style="color:var(--text-muted);font-size:13.5px;margin:6px 0 0;">Aprovechá para recuperar.</p>
+  </div>`;
+}
+
+function routineCardHTML(r) {
+  const t = tipoInfo(r.tipo);
   return `<div class="card routine-card" style="--accent:${r.color}">
     <div class="rc-body">
+      <span class="goal-type-badge" style="margin-bottom:6px;">${esc(t.label)}</span>
       <h3>${esc(r.name)}</h3>
       ${r.exercises.map(ex => `<div class="exercise-row"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}</span></div>`).join('') || '<div class="exercise-row"><span>Sin ejercicios cargados</span></div>'}
     </div>
   </div>`;
+}
+
+function renderRoutinesForDay(dayAssign) {
+  if (dayAssign.rest) return restDayCardHTML();
+  if (!dayAssign.routines.length) {
+    return emptyStateHTML('No asignaste entrenamiento para este día', 'Definilo en la pestaña Rutinas');
+  }
+  return dayAssign.routines.map(routineCardHTML).join('');
 }
 
 function emptyStateHTML(title, hint) {
@@ -214,13 +235,13 @@ function renderCalendario() {
     const iso = DB.toISODate(cellDate);
     const outside = cellDate.getMonth() !== cursor.getMonth();
 
-    const routineId = DB.Schedule.routineForDate(iso);
-    const hasRoutine = routineId && routineId !== 'rest';
+    const dayAssign = resolveDayAssignment(iso);
     const hasTodo = DB.Todos.byDate(iso).some(t => !t.done);
     const hasGoal = DB.Goals.all().some(g => g.targetDate === iso);
 
     const dots = [];
-    if (hasRoutine) dots.push('<span class="dot sage"></span>');
+    if (dayAssign.rest) dots.push('<span class="dot" style="background:var(--text-muted)"></span>');
+    else dayAssign.routines.slice(0, 3).forEach(r => dots.push(`<span class="dot" style="background:${tipoInfo(r.tipo).color}"></span>`));
     if (hasTodo) dots.push('<span class="dot gold"></span>');
     if (hasGoal) dots.push('<span class="dot text-muted"></span>');
 
@@ -235,18 +256,18 @@ function renderCalendario() {
 
 function renderDayDetail() {
   const iso = State.selectedDay;
-  const routineId = DB.Schedule.routineForDate(iso);
+  const dayAssign = resolveDayAssignment(iso);
   const todos = DB.Todos.byDate(iso);
   const goals = DB.Goals.all().filter(g => g.targetDate === iso);
 
   let routineLabel = 'Sin asignar';
-  if (routineId === 'rest') routineLabel = 'Descanso';
-  else if (routineId) routineLabel = DB.Routines.get(routineId)?.name || 'Rutina eliminada';
+  if (dayAssign.rest) routineLabel = 'Descanso';
+  else if (dayAssign.routines.length) routineLabel = dayAssign.routines.map(r => `${esc(r.name)} (${esc(tipoInfo(r.tipo).label)})`).join(' + ');
 
   document.getElementById('day-detail').innerHTML = `
     <div class="section-title">${fmtLongDate(iso)}</div>
     <div class="card" style="display:flex;justify-content:space-between;align-items:center;">
-      <div><div style="font-size:13px;color:var(--text-muted);">Entrenamiento</div><div style="margin-top:2px;">${esc(routineLabel)}</div></div>
+      <div><div style="font-size:13px;color:var(--text-muted);">Entrenamiento</div><div style="margin-top:2px;">${routineLabel}</div></div>
       <button class="btn btn-ghost btn-sm" data-action="change-day-routine" data-iso="${iso}">Cambiar</button>
     </div>
     <div class="section-title">Tareas</div>
@@ -269,14 +290,18 @@ function renderRutinas() {
   const schedCard = document.getElementById('weekly-schedule-card');
   const routines = DB.Routines.all();
   schedCard.innerHTML = DOW_MON_FIRST.map((key, idx) => {
-    const current = DB.Schedule.getDay(key);
-    return `<div class="settings-row" style="${idx===0?'border-top:none;':''}">
+    const current = DB.Schedule.getDay(key); // 'rest' | array de ids
+    const isRest = current === 'rest';
+    const activeIds = Array.isArray(current) ? current : [];
+    return `<div class="settings-row" style="flex-direction:column;align-items:stretch;gap:8px;${idx===0?'border-top:none;':''}">
       <div class="sr-label">${DOW_MON_LONG[idx]}</div>
-      <select data-action="set-schedule-day" data-day="${key}" style="background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13px;">
-        <option value="">Sin asignar</option>
-        <option value="rest" ${current==='rest'?'selected':''}>Descanso</option>
-        ${routines.map(r => `<option value="${r.id}" ${current===r.id?'selected':''}>${esc(r.name)}</option>`).join('')}
-      </select>
+      <div class="chip-row">
+        <button type="button" class="chip ${isRest?'active':''}" data-action="week-rest" data-day="${key}">Descanso</button>
+        ${routines.map(r => {
+          const active = activeIds.includes(r.id);
+          return `<button type="button" class="chip ${active?'active':''}" data-action="week-toggle" data-day="${key}" data-id="${r.id}" style="${active?`background:${r.color}22;border-color:${r.color};color:${r.color};`:''}">${esc(r.name)} · ${esc(tipoInfo(r.tipo).label)}</button>`;
+        }).join('') || '<span style="color:var(--text-muted);font-size:12.5px;">Creá una rutina primero</span>'}
+      </div>
     </div>`;
   }).join('');
 
@@ -284,6 +309,7 @@ function renderRutinas() {
   document.getElementById('routines-list').innerHTML = list.length ? list.map(r => `
     <div class="card routine-card" style="--accent:${r.color}">
       <div class="rc-body">
+        <span class="goal-type-badge" style="margin-bottom:6px;">${esc(tipoInfo(r.tipo).label)}</span>
         <h3>${esc(r.name)}</h3>
         ${r.exercises.map(ex => `<div class="exercise-row"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}</span></div>`).join('') || '<div class="exercise-row" style="color:var(--text-muted)"><span>Sin ejercicios</span></div>'}
       </div>
@@ -336,7 +362,7 @@ window.addEventListener('bitacora:change', renderAll);
 
 // ================= Formularios: RUTINA =================
 function openRoutineForm(routineId) {
-  const r = routineId ? DB.Routines.get(routineId) : { name: '', color: ROUTINE_COLORS[0], exercises: [] };
+  const r = routineId ? DB.Routines.get(routineId) : { name: '', tipo: 'fuerza', exercises: [] };
   let exRows = (r.exercises.length ? r.exercises : [{id: DB.uid(), name:'', sets:'', reps:''}]);
 
   function exerciseRowsHTML() {
@@ -352,9 +378,11 @@ function openRoutineForm(routineId) {
   openModal(`
     <h2>${routineId ? 'Editar rutina' : 'Nueva rutina'}</h2>
     <div class="field"><label>Nombre</label><input type="text" id="rt-name" value="${esc(r.name)}" placeholder="Ej: Empuje, Piernas..."></div>
-    <div class="field"><label>Color</label><div class="color-dot-row" id="rt-colors">
-      ${ROUTINE_COLORS.map(c => `<button type="button" class="color-dot ${c===r.color?'active':''}" data-color="${c}" style="background:${c}"></button>`).join('')}
-    </div></div>
+    <div class="field"><label>Tipo de entrenamiento</label>
+      <div class="chip-row" id="rt-tipos">
+        ${TIPOS.map(t => `<button type="button" class="chip ${t.key===r.tipo?'active':''}" data-tipo="${t.key}" style="${t.key===r.tipo?`background:${t.color}22;border-color:${t.color};color:${t.color};`:''}">${esc(t.label)}</button>`).join('')}
+      </div>
+    </div>
     <div class="field"><label>Ejercicios</label><div id="rt-exercises">${exerciseRowsHTML()}</div>
       <button class="btn btn-ghost btn-sm" type="button" id="rt-add-exercise">+ Agregar ejercicio</button>
     </div>
@@ -364,12 +392,14 @@ function openRoutineForm(routineId) {
     </div>
     ${routineId ? '' : ''}
   `, (root) => {
-    let selectedColor = r.color;
-    root.querySelectorAll('#rt-colors .color-dot').forEach(btn => {
+    let selectedTipo = r.tipo || 'fuerza';
+    root.querySelectorAll('#rt-tipos .chip').forEach(btn => {
       btn.addEventListener('click', () => {
-        selectedColor = btn.dataset.color;
-        root.querySelectorAll('#rt-colors .color-dot').forEach(b => b.classList.remove('active'));
+        selectedTipo = btn.dataset.tipo;
+        root.querySelectorAll('#rt-tipos .chip').forEach(b => { b.classList.remove('active'); b.style.cssText = ''; });
+        const t = tipoInfo(selectedTipo);
         btn.classList.add('active');
+        btn.style.cssText = `background:${t.color}22;border-color:${t.color};color:${t.color};`;
       });
     });
 
@@ -399,7 +429,7 @@ function openRoutineForm(routineId) {
       syncExFromDOM();
       const name = root.querySelector('#rt-name').value.trim();
       if (!name) { root.querySelector('#rt-name').focus(); return; }
-      const payload = { name, color: selectedColor, exercises: exRows.filter(x => x.name.trim()) };
+      const payload = { name, tipo: selectedTipo, color: tipoInfo(selectedTipo).color, exercises: exRows.filter(x => x.name.trim()) };
       if (routineId) DB.Routines.update(routineId, payload);
       else DB.Routines.add(payload);
       closeModal();
@@ -526,23 +556,40 @@ function openTodoForm(todoId, presetDate) {
 // ================= Cambiar rutina de un día puntual =================
 function openDayRoutineChanger(iso) {
   const routines = DB.Routines.all();
-  const current = DB.Schedule.routineForDate(iso);
+
+  function draw(root) {
+    const current = DB.Schedule.routinesForDate(iso); // 'rest' | array
+    const isRest = current === 'rest';
+    const activeIds = Array.isArray(current) ? current : [];
+    root.querySelector('#drc-row').innerHTML = `
+      <button type="button" class="chip ${!isRest && !activeIds.length ? 'active' : ''}" data-val="clear">Quitar (usar horario semanal)</button>
+      <button type="button" class="chip ${isRest?'active':''}" data-val="rest">Descanso</button>
+      ${routines.map(r => {
+        const active = activeIds.includes(r.id);
+        return `<button type="button" class="chip ${active?'active':''}" data-val="${r.id}" style="${active?`background:${r.color}22;border-color:${r.color};color:${r.color};`:''}">${esc(r.name)} · ${esc(tipoInfo(r.tipo).label)}</button>`;
+      }).join('')}
+    `;
+  }
+
   openModal(`
     <h2>${fmtLongDate(iso)}</h2>
     <div class="field"><label>Entrenamiento para este día</label>
-      <div class="chip-row" id="drc-row">
-        <button type="button" class="chip ${!current?'active':''}" data-val="">Quitar</button>
-        <button type="button" class="chip ${current==='rest'?'active':''}" data-val="rest">Descanso</button>
-        ${routines.map(r => `<button type="button" class="chip ${current===r.id?'active':''}" data-val="${r.id}">${esc(r.name)}</button>`).join('')}
-      </div>
+      <div class="badge-note" style="margin-bottom:10px;">Podés elegir varias rutinas de distinto tipo para el mismo día (ej. Fuerza + Cardio).</div>
+      <div class="chip-row" id="drc-row"></div>
     </div>
+    <div class="btn-row" style="margin-top:18px;"><button class="btn btn-primary" id="drc-done">Listo</button></div>
   `, (root) => {
-    root.querySelectorAll('#drc-row .chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        DB.Schedule.setOverride(iso, chip.dataset.val || null);
-        closeModal();
-      });
+    draw(root);
+    root.addEventListener('click', (e) => {
+      const chip = e.target.closest('#drc-row .chip');
+      if (!chip) return;
+      const val = chip.dataset.val;
+      if (val === 'clear') DB.Schedule.clearOverride(iso);
+      else if (val === 'rest') DB.Schedule.setOverrideRest(iso, !(DB.Schedule.routinesForDate(iso) === 'rest'));
+      else DB.Schedule.toggleOverrideRoutine(iso, val);
+      draw(root);
     });
+    root.querySelector('#drc-done').addEventListener('click', closeModal);
   });
 }
 
@@ -648,12 +695,8 @@ document.addEventListener('click', (e) => {
   else if (action === 'edit-routine') openRoutineForm(id);
   else if (action === 'delete-routine') { if (confirm('¿Eliminar esta rutina?')) DB.Routines.remove(id); }
   else if (action === 'change-day-routine') openDayRoutineChanger(el.dataset.iso);
-});
-
-document.addEventListener('change', (e) => {
-  if (e.target.dataset.action === 'set-schedule-day') {
-    DB.Schedule.setDay(e.target.dataset.day, e.target.value || null);
-  }
+  else if (action === 'week-rest') { const day = el.dataset.day; DB.Schedule.setDayRest(day, DB.Schedule.getDay(day) !== 'rest'); }
+  else if (action === 'week-toggle') DB.Schedule.toggleDayRoutine(el.dataset.day, el.dataset.id);
 });
 
 document.addEventListener('click', (e) => {
@@ -670,5 +713,6 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+DB.seedDefinicionRoutines();
 renderAll();
 Notifs.start();
