@@ -14,7 +14,33 @@ App 100% privada: no tiene login, no manda nada a ningún servidor. Todo (rutina
 - **Tareas**: lista completa con filtros (pendientes / hechas / todas), con fecha, hora y recordatorio opcional.
 - **Ajustes** (ícono ⚙ arriba a la derecha): activar recordatorios, elegir con cuánta anticipación avisar, exportar/importar copia de seguridad, borrar todo.
 
-## Cómo instalarla en tu iPhone (gratis, con GitHub Pages)
+## Cómo pedirle a Claude el archivo .md de un programa nuevo
+El lector de "Programa" es flexible: reconoce cualquier etiqueta en **negrita** dentro de cada día (no una lista fija), así que sirve tanto para el formato de japonés como para el de piano, o lo que generes de acá en más. Aun así, para que siempre lo detecte sin fallar, pedile a Claude que el archivo tenga esta estructura mínima:
+
+```
+# Nombre del programa — Semana N
+## Subtítulo o tema de la semana (opcional)
+
+Texto libre de introducción (objetivo, duración diaria, materiales, etc.)
+
+---
+
+### Día 1: Título del día
+- **Etiqueta 1 (duración opcional):** contenido...
+- **Etiqueta 2:** contenido...
+- **Etiqueta 3:** contenido...
+
+### Día 2: Título del día
+...
+```
+
+Dos reglas clave para que la app lo lea bien:
+- **La línea `# ... — Semana N`** tiene que incluir la palabra "Semana" seguida del número (así la app ordena y numera las semanas).
+- **Cada día** tiene que empezar con `### Día N: Título` o `## Día N — Título` (con `:`, `—` o `-` después del número, cualquiera funciona).
+- Cualquier etiqueta que quieras usar dentro del día (Técnica, Teoría, Actividad, Ejercicio, etc.) sirve, siempre que esté en **negrita** seguida de dos puntos.
+- Si el día es una prueba/examen, que la etiqueta incluya la palabra "Prueba" (ej: `**Prueba 1 (20 min):**`) — así la app le agrega automáticamente el botón de "marcar prueba hecha".
+
+
 
 1. **Creá un repositorio en GitHub** (si no tenés cuenta, es gratis en github.com).
    - "New repository" → nombre `bitacora` → **Public** → Create repository.

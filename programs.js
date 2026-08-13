@@ -10,12 +10,30 @@ const ProgState = {
 };
 
 // ================= Parser =================
-// Extrae el contenido de una sección tipo "**Nombre:**\n...texto..." hasta el
-// próximo encabezado en negrita, separador "---" o el final del bloque.
-function progExtractSection(body, label) {
-  const re = new RegExp('\\*\\*' + label + '[^*]*\\*\\*:?\\s*\\n?([\\s\\S]*?)(?=\\n\\*\\*[^*]+\\*\\*|\\n---|$)', 'i');
-  const m = body.match(re);
-  return m ? m[1].trim() : '';
+// Convierte texto con **negrita**/*cursiva* y saltos de línea a HTML simple (sin dependencias externas).
+function mdInline(text) {
+  let s = esc(text);
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  s = s.replace(/\n/g, '<br>');
+  return s;
+}
+
+// Extrae bloques con etiqueta en negrita: soporta tanto viñetas en una línea
+// ("- **Técnica (5 min):** texto...") como bloques de párrafo separados por líneas en blanco
+// ("**Teoría:**\ntexto..."). Cualquier etiqueta en **negrita** se reconoce, sin lista fija —
+// así sirve para japonés, piano o cualquier otro programa que genere Claude.
+function progExtractBlocks(body) {
+  const blocks = [];
+  const re = /-?[ \t]*\*\*([^*]+?)\*\*:?[ \t]*\n?([\s\S]*?)(?=\n[ \t]*-?[ \t]*\*\*[^*]+\*\*|\n#{2,4}\s|\n---|$)/g;
+  let m;
+  while ((m = re.exec(body))) {
+    const label = m[1].trim().replace(/:$/, '').trim();
+    const content = m[2].trim();
+    if (!label) continue;
+    blocks.push({ label, content, isTest: /prueba/i.test(label) });
+  }
+  return blocks;
 }
 
 // Extrae pares "carácter (romaji)" cuando aparecen — útil para programas de idiomas (ej. japonés).
@@ -36,38 +54,51 @@ function progExtractCharacters(body) {
   return out;
 }
 
-// Formato esperado del .md (el mismo que Claude ya viene generando):
-// # Semana N — Título (Nivel opcional)
-// ## Objetivo de la semana
-// ## Día N — Título
-// **Teoría:** / **Nota importante:** / **Actividad:** / **Prueba del día:**
+// Texto introductorio de la semana: usa "## Objetivo de la semana" si existe (formato viejo),
+// o si no, todo el texto entre el título y el primer día / primer separador "---" (formato genérico).
+function progExtractIntro(text) {
+  const objMatch = text.match(/##\s*Objetivo de la semana\s*\n([\s\S]*?)(?=\n##\s|\n---)/i);
+  if (objMatch) return objMatch[1].trim();
+  const afterTitle = text.replace(/^#[^\n]*\n?/, '');
+  const introMatch = afterTitle.match(/^([\s\S]*?)(?=\n#{2,4}\s*Día\s*\d+|\n---)/);
+  if (!introMatch) return '';
+  return introMatch[1].replace(/^#{1,4}[^\n]*\n?/, '').trim();
+}
+
+// Formato admitido del .md (flexible, sirve para el que ya venía generando Claude):
+// # Semana N — Título (Nivel opcional)   ó   # Nombre del plan — Semana N
+// ## Subtítulo opcional
+// texto introductorio libre (objetivo, duración, materiales, etc.)
+// ---
+// ### Día N: Título    ó    ## Día N — Título
+// - **Cualquier etiqueta (duración opcional):** contenido...
 function parseProgramWeekFile(text) {
   const titleMatch = text.match(/^#\s*(.+)$/m);
   const fullTitle = titleMatch ? titleMatch[1].trim() : 'Semana';
   const weekNumMatch = fullTitle.match(/Semana\s*(\d+)/i);
   const levelMatch = fullTitle.match(/\(([^)]+)\)\s*$/);
 
-  const objMatch = text.match(/##\s*Objetivo de la semana\s*\n([\s\S]*?)(?=\n##\s|\n---)/i);
-  const objective = objMatch ? objMatch[1].trim() : '';
+  const subtitleMatch = text.match(/^#[^\n]*\n##\s*([^\n]+)/);
+  const subtitle = subtitleMatch ? subtitleMatch[1].trim() : '';
+
+  const objective = progExtractIntro(text);
 
   const days = [];
-  const dayRe = /##\s*Día\s*(\d+)\s*[—\-–]\s*([^\n]+)\n([\s\S]*?)(?=\n##\s*Día\s*\d+|\n##\s*Cómo vamos a trabajar|\n##\s*Cierre|$)/g;
+  const dayRe = /#{2,4}\s*Día\s*(\d+)\s*[:\-–—]?\s*([^\n]*)\n([\s\S]*?)(?=\n#{2,4}\s*Día\s*\d+|\n#{2,4}\s*Cómo vamos a trabajar|\n#{2,4}\s*Cierre|\n---|$)/g;
   let m;
   while ((m = dayRe.exec(text))) {
     const body = m[3];
     days.push({
       num: Number(m[1]),
       title: m[2].trim(),
-      theory: progExtractSection(body, 'Teoría[^*]*'),
-      notaImportante: progExtractSection(body, 'Nota importante'),
-      activity: progExtractSection(body, 'Actividad'),
-      test: progExtractSection(body, 'Prueba del día[^*]*'),
+      blocks: progExtractBlocks(body),
       characters: progExtractCharacters(body)
     });
   }
 
   return {
     title: fullTitle.replace(/\s*\([^)]+\)\s*$/, '').trim(),
+    subtitle,
     level: levelMatch ? levelMatch[1].trim() : '',
     weekNumber: weekNumMatch ? Number(weekNumMatch[1]) : null,
     objective,
@@ -101,7 +132,7 @@ function progWeekCardHTML(w) {
   const totalDays = w.days.length;
   const doneDays = w.days.filter(d => d.lessonDone).length;
   const testsDone = w.days.filter(d => d.testDone).length;
-  const testsTotal = w.days.filter(d => d.test).length;
+  const testsTotal = w.days.filter(d => d.blocks.some(b => b.isTest)).length;
   const open = ProgState.openWeekId === w.id;
 
   return `<div class="card jp-week-card">
@@ -110,13 +141,14 @@ function progWeekCardHTML(w) {
         <div style="display:flex;align-items:center;gap:8px;">
           <h3 style="margin:0;">${esc(w.title)}</h3>
         </div>
+        ${w.subtitle ? `<div class="ti-meta" style="margin-top:2px;">${esc(w.subtitle)}</div>` : ''}
         <div class="ti-meta" style="margin-top:4px;">${totalDays} días · ${doneDays}/${totalDays} lecciones${testsTotal ? ` · ${testsDone}/${testsTotal} pruebas` : ''} · subida ${fmtShortDate(w.uploadedAt)}</div>
       </div>
       <button class="icon-btn btn-sm" style="width:30px;height:30px;flex-shrink:0;" data-action="prog-delete-week" data-id="${w.id}" aria-label="Eliminar semana">✕</button>
       <span style="margin-left:6px;color:var(--text-muted);flex-shrink:0;">${open ? '▲' : '▼'}</span>
     </div>
     ${open ? `
-      ${w.objective ? `<p class="goal-desc" style="margin-top:12px;">${esc(w.objective)}</p>` : ''}
+      ${w.objective ? `<p class="goal-desc" style="margin-top:12px;">${mdInline(w.objective)}</p>` : ''}
       <div class="jp-days-list">
         ${w.days.map(d => progDayRowHTML(w.id, d)).join('')}
       </div>
@@ -125,22 +157,22 @@ function progWeekCardHTML(w) {
 }
 
 function progDayRowHTML(weekId, d) {
+  const testBlocks = d.blocks.filter(b => b.isTest);
+  const otherBlocks = d.blocks.filter(b => !b.isTest);
   return `<div class="jp-day-row ${d.lessonDone ? 'done' : ''}">
     <div class="jp-day-head">
       <button class="stamp" style="--size:24px" data-action="prog-toggle-lesson" data-week="${weekId}" data-day="${d.id}" aria-label="Marcar lección hecha">${stampSVG()}</button>
       <div style="flex:1;min-width:0;">
-        <div class="jp-day-title">Día ${d.num} — ${esc(d.title)}</div>
+        <div class="jp-day-title">Día ${d.num}${d.title ? ' — ' + esc(d.title) : ''}</div>
         ${d.characters.length ? `<div class="ti-meta">${d.characters.map(c => esc(c.char)).join(' ')}</div>` : ''}
       </div>
     </div>
-    ${d.theory ? `<div class="jp-day-block"><span class="jp-block-label">Teoría</span><p>${esc(d.theory)}</p></div>` : ''}
-    ${d.notaImportante ? `<div class="jp-day-block"><span class="jp-block-label">Nota importante</span><p>${esc(d.notaImportante)}</p></div>` : ''}
-    ${d.activity ? `<div class="jp-day-block"><span class="jp-block-label">Actividad</span><p>${esc(d.activity)}</p></div>` : ''}
-    ${d.test ? `<div class="jp-day-block jp-test-block">
-        <span class="jp-block-label">Prueba del día</span>
-        <p>${esc(d.test)}</p>
+    ${otherBlocks.map(b => `<div class="jp-day-block"><span class="jp-block-label">${esc(b.label)}</span><p>${mdInline(b.content)}</p></div>`).join('')}
+    ${testBlocks.map(b => `<div class="jp-day-block jp-test-block">
+        <span class="jp-block-label">${esc(b.label)}</span>
+        <p>${mdInline(b.content)}</p>
         <button class="btn btn-sm ${d.testDone ? 'btn-ghost' : 'btn-primary'}" data-action="prog-toggle-test" data-week="${weekId}" data-day="${d.id}">${d.testDone ? '✓ Prueba hecha' : 'Marcar prueba como hecha'}</button>
-      </div>` : ''}
+      </div>`).join('')}
   </div>`;
 }
 

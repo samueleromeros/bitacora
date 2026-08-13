@@ -86,6 +86,27 @@ function load() {
     if (!_cache.programs) _cache.programs = {};
     // por si quedó algún objetivo viejo tipo "japanese" sin semanas asociadas
     _cache.goals.forEach(g => { if (g.type === 'japanese') g.type = 'programa'; });
+    // migración única: los días viejos guardaban campos fijos (theory/notaImportante/activity/test);
+    // ahora cada día guarda "blocks" genéricos para poder leer cualquier formato de plan (japonés, piano, etc.)
+    if (!_cache._migratedProgramBlocks) {
+      Object.values(_cache.programs).forEach(prog => {
+        (prog.weeks || []).forEach(w => {
+          (w.days || []).forEach(d => {
+            if (!Array.isArray(d.blocks)) {
+              const blocks = [];
+              if (d.theory) blocks.push({ label: 'Teoría', content: d.theory, isTest: false });
+              if (d.notaImportante) blocks.push({ label: 'Nota importante', content: d.notaImportante, isTest: false });
+              if (d.activity) blocks.push({ label: 'Actividad', content: d.activity, isTest: false });
+              if (d.test) blocks.push({ label: 'Prueba del día', content: d.test, isTest: true });
+              d.blocks = blocks;
+              delete d.theory; delete d.notaImportante; delete d.activity; delete d.test;
+            }
+          });
+        });
+      });
+      _cache._migratedProgramBlocks = true;
+      save();
+    }
   } catch (e) {
     console.error('Error leyendo datos, se usa un estado nuevo', e);
     _cache = defaultData();
@@ -338,6 +359,7 @@ const Programs = {
       id: uid(),
       weekNumber: week.weekNumber ?? null,
       title: week.title || 'Semana',
+      subtitle: week.subtitle || '',
       objective: week.objective || '',
       level: week.level || '',
       uploadedAt: todayISO(),
@@ -346,10 +368,7 @@ const Programs = {
         id: uid(),
         num: d.num,
         title: d.title || '',
-        theory: d.theory || '',
-        notaImportante: d.notaImportante || '',
-        activity: d.activity || '',
-        test: d.test || '',
+        blocks: (d.blocks || []).map(b => ({ label: b.label || '', content: b.content || '', isTest: !!b.isTest })),
         characters: d.characters || [],
         lessonDone: false,
         testDone: false
