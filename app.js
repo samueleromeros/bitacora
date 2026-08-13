@@ -81,7 +81,7 @@ function renderHoy() {
   // Ejercicios de hoy — pueden venir de varias rutinas/tipos distintos
   const dayAssign = DB.Schedule.exercisesForDate(iso);
   const routineBox = document.getElementById('hoy-routine');
-  routineBox.innerHTML = renderExercisesForDay(dayAssign);
+  routineBox.innerHTML = renderExercisesForDay(dayAssign, iso);
 
   // Tareas de hoy
   const todos = DB.Todos.byDate(iso).sort((a,b) => (a.time||'99:99').localeCompare(b.time||'99:99'));
@@ -130,7 +130,39 @@ function formatDays(days) {
   return days.map(dk => DOW_MON_LABEL[DOW_MON_FIRST.indexOf(dk)]).join('/');
 }
 
-// exercises: lista de ejercicios a mostrar (ya filtrados a un día si corresponde); showDays: si mostrar los días asignados a cada uno
+// Detecta si un texto de reps/series representa una duración ("20 seg", "30-45 seg", "15-20 min") y devuelve los segundos
+function parseDurationSeconds(text) {
+  if (!text) return null;
+  const m = String(text).match(/(\d+)\s*(segundos|minutos|seg|min|s|m)\b/i);
+  if (!m) return null;
+  let val = parseInt(m[1], 10);
+  if (isNaN(val)) return null;
+  if (m[2].toLowerCase().startsWith('m')) val *= 60;
+  return val;
+}
+
+// Tarjeta interactiva de "Hoy": tocarla abre la sesión para ir completando ejercicios
+function hoySessionCardHTML(routine, exercises, iso) {
+  const t = tipoInfo(routine.tipo);
+  const doneCount = exercises.filter(ex => DB.ExerciseLog.isDone(iso, ex.id)).length;
+  const allDone = exercises.length > 0 && doneCount === exercises.length;
+  return `<div class="card routine-card" style="--accent:${routine.color};cursor:pointer;" data-action="open-session" data-routine="${routine.id}" data-iso="${iso}">
+    <div class="rc-body">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span class="goal-type-badge" style="margin:0;">${esc(t.label)}</span>
+        <span class="ti-meta">${doneCount}/${exercises.length}${allDone ? ' ✓' : ''}</span>
+      </div>
+      <h3 style="margin-top:6px;">${esc(routine.name)}</h3>
+      ${exercises.map(ex => {
+        const done = DB.ExerciseLog.isDone(iso, ex.id);
+        return `<div class="exercise-row" style="${done?'color:var(--text-muted);text-decoration:line-through;':''}"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}</span></div>`;
+      }).join('') || '<div class="exercise-row"><span>Sin ejercicios cargados</span></div>'}
+      ${!allDone && exercises.length ? '<div class="ti-meta" style="margin-top:8px;color:var(--sage);">Tocá para completar ▸</div>' : ''}
+    </div>
+  </div>`;
+}
+
+// exercises: lista de ejercicios a mostrar (ya filtrados a un día si corresponde); showDays: si mostrar los días asignados a cada uno. Usada en Rutinas (lista editable, no interactiva).
 function routineCardHTML(r, exercises, showDays) {
   const t = tipoInfo(r.tipo);
   const list = exercises || r.exercises;
@@ -143,12 +175,83 @@ function routineCardHTML(r, exercises, showDays) {
   </div>`;
 }
 
-function renderExercisesForDay(dayAssign) {
+function renderExercisesForDay(dayAssign, iso) {
   if (dayAssign.rest) return restDayCardHTML();
   if (!dayAssign.items.length) {
     return emptyStateHTML('No tenés ejercicios asignados para hoy', 'Asignale un día a cada ejercicio en Rutinas');
   }
-  return groupItemsByRoutine(dayAssign.items).map(g => routineCardHTML(g.routine, g.exercises, false)).join('');
+  return groupItemsByRoutine(dayAssign.items).map(g => hoySessionCardHTML(g.routine, g.exercises, iso)).join('');
+}
+
+// ================= Sesión de entrenamiento (checklist + cronómetro) =================
+function openWorkoutSession(routine, exercises, iso) {
+  const timers = {}; // exId -> intervalId
+
+  function rowHTML(ex) {
+    const done = DB.ExerciseLog.isDone(iso, ex.id);
+    const durationSec = parseDurationSeconds(ex.reps) || parseDurationSeconds(ex.sets);
+    return `<div class="card" data-ex-row="${ex.id}" style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+      <button class="stamp ${done?'done':''}" data-action="session-toggle" data-id="${ex.id}" aria-label="Marcar hecho">${stampSVG()}</button>
+      <div style="flex:1;min-width:0;">
+        <div style="${done?'text-decoration:line-through;color:var(--text-muted);':''}">${esc(ex.name)}</div>
+        <div class="ti-meta">${esc(ex.sets||'')}×${esc(ex.reps||'')}</div>
+        ${durationSec ? `<div data-timer-box="${ex.id}" style="margin-top:6px;font-family:var(--font-mono);font-size:20px;color:var(--gold);">${durationSec}s</div>` : ''}
+      </div>
+      ${durationSec ? `<button class="btn btn-ghost btn-sm" data-action="session-timer-start" data-id="${ex.id}" data-seconds="${durationSec}">▶ iniciar</button>` : ''}
+    </div>`;
+  }
+
+  function drawList(root) {
+    root.querySelector('#session-list').innerHTML = exercises.map(rowHTML).join('');
+    const doneCount = exercises.filter(ex => DB.ExerciseLog.isDone(iso, ex.id)).length;
+    root.querySelector('#session-progress').textContent = `${doneCount}/${exercises.length} completados`;
+  }
+
+  function startTimerForRow(root, exId, total) {
+    if (timers[exId]) clearInterval(timers[exId]);
+    let remaining = total;
+    const box = () => root.querySelector(`[data-timer-box="${exId}"]`);
+    const render = () => { const b = box(); if (b) { b.textContent = `${remaining}s`; b.style.color = remaining <= 0 ? 'var(--sage)' : 'var(--gold)'; } };
+    render();
+    timers[exId] = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(timers[exId]);
+        delete timers[exId];
+        remaining = 0;
+        render();
+        DB.ExerciseLog.setDone(iso, exId, true);
+        drawList(root);
+        return;
+      }
+      render();
+    }, 1000);
+  }
+
+  openModal(`
+    <h2>${esc(routine.name)}</h2>
+    <div class="ti-meta" id="session-progress" style="margin-bottom:12px;"></div>
+    <div id="session-list"></div>
+    <div class="btn-row" style="margin-top:14px;"><button class="btn btn-primary" id="session-close">Listo</button></div>
+  `, (root) => {
+    drawList(root);
+    root.querySelector('#session-list').addEventListener('click', (e) => {
+      const toggleBtn = e.target.closest('[data-action="session-toggle"]');
+      if (toggleBtn) {
+        DB.ExerciseLog.toggle(iso, toggleBtn.dataset.id);
+        drawList(root);
+        return;
+      }
+      const startBtn = e.target.closest('[data-action="session-timer-start"]');
+      if (startBtn) {
+        startTimerForRow(root, startBtn.dataset.id, Number(startBtn.dataset.seconds));
+      }
+    });
+    root.querySelector('#session-close').addEventListener('click', () => {
+      Object.values(timers).forEach(id => clearInterval(id));
+      closeModal();
+    });
+  });
 }
 
 function emptyStateHTML(title, hint) {
@@ -692,6 +795,13 @@ document.addEventListener('click', (e) => {
   else if (action === 'edit-routine') openRoutineForm(id);
   else if (action === 'delete-routine') { if (confirm('¿Eliminar esta rutina?')) DB.Routines.remove(id); }
   else if (action === 'toggle-day-rest') { const iso = el.dataset.iso; DB.Schedule.setOverrideRest(iso, DB.Schedule.getOverride(iso) !== 'rest'); }
+  else if (action === 'open-session') {
+    const routine = DB.Routines.get(el.dataset.routine);
+    if (!routine) return;
+    const iso = el.dataset.iso;
+    const exercises = DB.Schedule.exercisesForDate(iso).items.filter(i => i.routine.id === routine.id).map(i => i.exercise);
+    openWorkoutSession(routine, exercises, iso);
+  }
 });
 
 document.addEventListener('click', (e) => {

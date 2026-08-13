@@ -14,6 +14,7 @@ function defaultData() {
     version: 1,
     routines: [],          // {id, name, tipo, color, exercises:[{id,name,sets,reps,notes,days:['lun','jue',...]}]}
     dateOverrides: {},      // {'2026-08-15': 'rest'} — marca un día puntual como descanso, pisando lo que tocaría ese día
+    exerciseLog: {},        // {'2026-08-15': [exerciseId, exerciseId, ...]} — ejercicios marcados como hechos ese día
     goals: [],              // {id, title, type, description, targetDate, numeric:{}, habit:{}, checklist:{}}
     todos: [],               // {id, title, date, time, done, reminder, notified}
     settings: {
@@ -142,6 +143,29 @@ const Schedule = {
     const d = new Date(isoDate + 'T00:00:00');
     const dayKey = dayKeyFromDate(d);
     return { rest: false, items: Schedule.exercisesForDayKey(dayKey) };
+  }
+};
+
+// ---------- Registro de ejercicios completados por día (para la sesión de "Hoy") ----------
+const ExerciseLog = {
+  doneIds: (isoDate) => load().exerciseLog[isoDate] || [],
+  isDone: (isoDate, exId) => (load().exerciseLog[isoDate] || []).includes(exId),
+  toggle: (isoDate, exId) => {
+    const data = load();
+    if (!data.exerciseLog[isoDate]) data.exerciseLog[isoDate] = [];
+    const arr = data.exerciseLog[isoDate];
+    const idx = arr.indexOf(exId);
+    if (idx >= 0) arr.splice(idx, 1); else arr.push(exId);
+    save();
+  },
+  setDone: (isoDate, exId, done) => {
+    const data = load();
+    if (!data.exerciseLog[isoDate]) data.exerciseLog[isoDate] = [];
+    const arr = data.exerciseLog[isoDate];
+    const idx = arr.indexOf(exId);
+    if (done && idx < 0) arr.push(exId);
+    if (!done && idx >= 0) arr.splice(idx, 1);
+    save();
   }
 };
 
@@ -354,4 +378,4 @@ const Backup = {
 };
 
 window.DB = { load, save, uid, toISODate, todayISO, dayKeyFromDate, DIAS, DIAS_LARGO,
-  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Japanese, seedDefinicionRoutines };
+  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Japanese, seedDefinicionRoutines, ExerciseLog };
