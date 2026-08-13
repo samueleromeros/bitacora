@@ -144,7 +144,8 @@ function parseDurationSeconds(text) {
 // Tarjeta interactiva de "Hoy": tocarla abre la sesión para ir completando ejercicios
 function hoySessionCardHTML(routine, exercises, iso) {
   const t = tipoInfo(routine.tipo);
-  const doneCount = exercises.filter(ex => DB.ExerciseLog.isDone(iso, ex.id)).length;
+  const statuses = exercises.map(ex => DB.ExerciseLog.isDone(iso, ex.id, DB.parseSetsCount(ex.sets)));
+  const doneCount = statuses.filter(Boolean).length;
   const allDone = exercises.length > 0 && doneCount === exercises.length;
   return `<div class="card routine-card" style="--accent:${routine.color};cursor:pointer;" data-action="open-session" data-routine="${routine.id}" data-iso="${iso}">
     <div class="rc-body">
@@ -153,9 +154,12 @@ function hoySessionCardHTML(routine, exercises, iso) {
         <span class="ti-meta">${doneCount}/${exercises.length}${allDone ? ' ✓' : ''}</span>
       </div>
       <h3 style="margin-top:6px;">${esc(routine.name)}</h3>
-      ${exercises.map(ex => {
-        const done = DB.ExerciseLog.isDone(iso, ex.id);
-        return `<div class="exercise-row" style="${done?'color:var(--text-muted);text-decoration:line-through;':''}"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}</span></div>`;
+      ${exercises.map((ex, i) => {
+        const total = DB.parseSetsCount(ex.sets);
+        const count = DB.ExerciseLog.getCount(iso, ex.id);
+        const done = statuses[i];
+        const progress = total > 1 && !done ? ` · serie ${Math.min(count, total)}/${total}` : '';
+        return `<div class="exercise-row" style="${done?'color:var(--text-muted);text-decoration:line-through;':''}"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}${progress}</span></div>`;
       }).join('') || '<div class="exercise-row"><span>Sin ejercicios cargados</span></div>'}
       ${!allDone && exercises.length ? '<div class="ti-meta" style="margin-top:8px;color:var(--sage);">Tocá para completar ▸</div>' : ''}
     </div>
@@ -183,33 +187,36 @@ function renderExercisesForDay(dayAssign, iso) {
   return groupItemsByRoutine(dayAssign.items).map(g => hoySessionCardHTML(g.routine, g.exercises, iso)).join('');
 }
 
-// ================= Sesión de entrenamiento (checklist + cronómetro) =================
+// ================= Sesión de entrenamiento (checklist + cronómetro por serie) =================
 function openWorkoutSession(routine, exercises, iso) {
   const timers = {}; // exId -> intervalId
 
   function rowHTML(ex) {
-    const done = DB.ExerciseLog.isDone(iso, ex.id);
+    const total = DB.parseSetsCount(ex.sets);
+    const count = DB.ExerciseLog.getCount(iso, ex.id);
+    const done = count >= total;
     const durationSec = parseDurationSeconds(ex.reps) || parseDurationSeconds(ex.sets);
+    const nextSet = Math.min(count + 1, total);
     return `<div class="card" data-ex-row="${ex.id}" style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
-      <button class="stamp ${done?'done':''}" data-action="session-toggle" data-id="${ex.id}" aria-label="Marcar hecho">${stampSVG()}</button>
+      <button class="stamp ${done?'done':''}" data-action="session-toggle" data-id="${ex.id}" data-total="${total}" aria-label="Marcar hecho">${stampSVG()}</button>
       <div style="flex:1;min-width:0;">
         <div style="${done?'text-decoration:line-through;color:var(--text-muted);':''}">${esc(ex.name)}</div>
-        <div class="ti-meta">${esc(ex.sets||'')}×${esc(ex.reps||'')}</div>
-        ${durationSec ? `<div data-timer-box="${ex.id}" style="margin-top:6px;font-family:var(--font-mono);font-size:20px;color:var(--gold);">${durationSec}s</div>` : ''}
+        <div class="ti-meta">${esc(ex.sets||'')}×${esc(ex.reps||'')}${total>1 ? ` · serie ${Math.min(count,total)}/${total}` : ''}</div>
+        ${durationSec && !done ? `<div data-timer-box="${ex.id}" style="margin-top:6px;font-family:var(--font-mono);font-size:20px;color:var(--gold);">${durationSec}s</div>` : ''}
       </div>
-      ${durationSec ? `<button class="btn btn-ghost btn-sm" data-action="session-timer-start" data-id="${ex.id}" data-seconds="${durationSec}">▶ iniciar</button>` : ''}
+      ${durationSec && !done ? `<button class="btn btn-ghost btn-sm" data-action="session-timer-start" data-id="${ex.id}" data-seconds="${durationSec}" data-total="${total}">▶ serie ${nextSet}/${total}</button>` : ''}
     </div>`;
   }
 
   function drawList(root) {
     root.querySelector('#session-list').innerHTML = exercises.map(rowHTML).join('');
-    const doneCount = exercises.filter(ex => DB.ExerciseLog.isDone(iso, ex.id)).length;
+    const doneCount = exercises.filter(ex => DB.ExerciseLog.isDone(iso, ex.id, DB.parseSetsCount(ex.sets))).length;
     root.querySelector('#session-progress').textContent = `${doneCount}/${exercises.length} completados`;
   }
 
-  function startTimerForRow(root, exId, total) {
+  function startTimerForRow(root, exId, seconds, setsTotal) {
     if (timers[exId]) clearInterval(timers[exId]);
-    let remaining = total;
+    let remaining = seconds;
     const box = () => root.querySelector(`[data-timer-box="${exId}"]`);
     const render = () => { const b = box(); if (b) { b.textContent = `${remaining}s`; b.style.color = remaining <= 0 ? 'var(--sage)' : 'var(--gold)'; } };
     render();
@@ -220,7 +227,7 @@ function openWorkoutSession(routine, exercises, iso) {
         delete timers[exId];
         remaining = 0;
         render();
-        DB.ExerciseLog.setDone(iso, exId, true);
+        DB.ExerciseLog.incrementSet(iso, exId, setsTotal);
         drawList(root);
         return;
       }
@@ -238,13 +245,14 @@ function openWorkoutSession(routine, exercises, iso) {
     root.querySelector('#session-list').addEventListener('click', (e) => {
       const toggleBtn = e.target.closest('[data-action="session-toggle"]');
       if (toggleBtn) {
-        DB.ExerciseLog.toggle(iso, toggleBtn.dataset.id);
+        DB.ExerciseLog.toggleFull(iso, toggleBtn.dataset.id, Number(toggleBtn.dataset.total));
+        if (timers[toggleBtn.dataset.id]) { clearInterval(timers[toggleBtn.dataset.id]); delete timers[toggleBtn.dataset.id]; }
         drawList(root);
         return;
       }
       const startBtn = e.target.closest('[data-action="session-timer-start"]');
       if (startBtn) {
-        startTimerForRow(root, startBtn.dataset.id, Number(startBtn.dataset.seconds));
+        startTimerForRow(root, startBtn.dataset.id, Number(startBtn.dataset.seconds), Number(startBtn.dataset.total));
       }
     });
     root.querySelector('#session-close').addEventListener('click', () => {

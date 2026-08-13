@@ -14,7 +14,7 @@ function defaultData() {
     version: 1,
     routines: [],          // {id, name, tipo, color, exercises:[{id,name,sets,reps,notes,days:['lun','jue',...]}]}
     dateOverrides: {},      // {'2026-08-15': 'rest'} — marca un día puntual como descanso, pisando lo que tocaría ese día
-    exerciseLog: {},        // {'2026-08-15': [exerciseId, exerciseId, ...]} — ejercicios marcados como hechos ese día
+    exerciseLog: {},        // {'2026-08-15': {exerciseId: seriesCompletadas, ...}}
     goals: [],              // {id, title, type, description, targetDate, numeric:{}, habit:{}, checklist:{}}
     todos: [],               // {id, title, date, time, done, reminder, notified}
     settings: {
@@ -52,6 +52,23 @@ function load() {
       });
       _cache._migratedExerciseDays = true;
       delete _cache.schedule;
+      save();
+    }
+    // migración única: exerciseLog viejo era un array de ids "hecho/no hecho"; se convierte a conteo de series (completo)
+    if (!_cache._migratedExerciseLogCount) {
+      Object.keys(_cache.exerciseLog || {}).forEach(isoDate => {
+        const val = _cache.exerciseLog[isoDate];
+        if (Array.isArray(val)) {
+          const obj = {};
+          val.forEach(exId => {
+            const routine = _cache.routines.find(r => (r.exercises || []).some(e => e.id === exId));
+            const ex = routine && routine.exercises.find(e => e.id === exId);
+            obj[exId] = ex ? parseSetsCount(ex.sets) : 1; // se marca como totalmente completo, como estaba antes
+          });
+          _cache.exerciseLog[isoDate] = obj;
+        }
+      });
+      _cache._migratedExerciseLogCount = true;
       save();
     }
   } catch (e) {
@@ -146,25 +163,35 @@ const Schedule = {
   }
 };
 
-// ---------- Registro de ejercicios completados por día (para la sesión de "Hoy") ----------
+// ---------- Registro de series completadas por ejercicio y por día (para la sesión de "Hoy") ----------
+// exerciseLog[isoDate][exerciseId] = cantidad de series ya completadas ese día
+function parseSetsCount(setsText) {
+  if (!setsText) return 1;
+  const m = String(setsText).match(/\d+/);
+  if (!m) return 1;
+  const n = parseInt(m[0], 10);
+  return n > 0 ? n : 1;
+}
 const ExerciseLog = {
-  doneIds: (isoDate) => load().exerciseLog[isoDate] || [],
-  isDone: (isoDate, exId) => (load().exerciseLog[isoDate] || []).includes(exId),
-  toggle: (isoDate, exId) => {
+  getCount: (isoDate, exId) => (load().exerciseLog[isoDate] || {})[exId] || 0,
+  isDone: (isoDate, exId, totalSets) => ExerciseLog.getCount(isoDate, exId) >= (totalSets || 1),
+  // Suma una serie completada (usado al terminar el cronómetro de una serie); no supera el total
+  incrementSet: (isoDate, exId, totalSets) => {
     const data = load();
-    if (!data.exerciseLog[isoDate]) data.exerciseLog[isoDate] = [];
-    const arr = data.exerciseLog[isoDate];
-    const idx = arr.indexOf(exId);
-    if (idx >= 0) arr.splice(idx, 1); else arr.push(exId);
+    if (!data.exerciseLog[isoDate]) data.exerciseLog[isoDate] = {};
+    const max = totalSets || 1;
+    const cur = data.exerciseLog[isoDate][exId] || 0;
+    data.exerciseLog[isoDate][exId] = Math.min(cur + 1, max);
     save();
+    return data.exerciseLog[isoDate][exId];
   },
-  setDone: (isoDate, exId, done) => {
+  // Toggle manual (botón sello): si no está completo del todo, lo completa; si ya estaba completo, lo reinicia a 0
+  toggleFull: (isoDate, exId, totalSets) => {
     const data = load();
-    if (!data.exerciseLog[isoDate]) data.exerciseLog[isoDate] = [];
-    const arr = data.exerciseLog[isoDate];
-    const idx = arr.indexOf(exId);
-    if (done && idx < 0) arr.push(exId);
-    if (!done && idx >= 0) arr.splice(idx, 1);
+    if (!data.exerciseLog[isoDate]) data.exerciseLog[isoDate] = {};
+    const max = totalSets || 1;
+    const cur = data.exerciseLog[isoDate][exId] || 0;
+    data.exerciseLog[isoDate][exId] = cur >= max ? 0 : max;
     save();
   }
 };
@@ -378,4 +405,4 @@ const Backup = {
 };
 
 window.DB = { load, save, uid, toISODate, todayISO, dayKeyFromDate, DIAS, DIAS_LARGO,
-  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Japanese, seedDefinicionRoutines, ExerciseLog };
+  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Japanese, seedDefinicionRoutines, ExerciseLog, parseSetsCount };
