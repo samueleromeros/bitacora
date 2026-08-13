@@ -37,9 +37,10 @@ function switchView(view) {
   document.getElementById('view-' + view).classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
 
-  const titles = { hoy: 'Hoy', calendario: 'Calendario', rutinas: 'Rutinas', objetivos: 'Objetivos', tareas: 'Tareas' };
+  const titles = { hoy: 'Hoy', calendario: 'Calendario', rutinas: 'Rutinas', objetivos: 'Objetivos', tareas: 'Tareas', japones: 'Japonés' };
   document.getElementById('header-title').textContent = titles[view];
   document.getElementById('header-eyebrow').textContent = 'bitácora';
+  document.getElementById('fab-add').style.display = (view === 'japones') ? 'none' : '';
 
   renderAll();
 }
@@ -136,7 +137,26 @@ function todoRowHTML(t) {
 }
 
 function goalCardHTML(g) {
-  const typeLabel = { numeric: 'Progreso', habit: 'Hábito', checklist: 'Lista' }[g.type];
+  const typeLabel = { numeric: 'Progreso', habit: 'Hábito', checklist: 'Lista', japanese: 'Idioma' }[g.type];
+  if (g.type === 'japanese') {
+    const weeks = DB.Japanese.weeks();
+    const learned = DB.Japanese.learnedChars();
+    return `<div class="card goal-card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+        <div style="flex:1;min-width:0;">
+          <span class="goal-type-badge">${typeLabel}</span>
+          <h3>${esc(g.title)}</h3>
+        </div>
+        <div style="display:flex;gap:6px;flex-shrink:0;">
+          <button class="icon-btn btn-sm" style="width:30px;height:30px;" data-action="edit-goal" data-id="${g.id}">✎</button>
+          <button class="icon-btn btn-sm" style="width:30px;height:30px;" data-action="delete-goal" data-id="${g.id}">✕</button>
+        </div>
+      </div>
+      ${g.description ? `<p class="goal-desc">${esc(g.description)}</p>` : ''}
+      <div class="ti-meta">${weeks.length} semana${weeks.length===1?'':'s'} cargada${weeks.length===1?'':'s'} · ${learned.size} caracteres aprendidos</div>
+      <button class="btn btn-primary" style="margin-top:12px;" data-action="open-japones">Abrir programa de japonés</button>
+    </div>`;
+  }
   let inner = '';
   if (g.type === 'numeric') {
     const pct = Math.max(0, Math.min(100, Math.round((g.numeric.current / (g.numeric.target || 1)) * 100)));
@@ -310,6 +330,7 @@ function renderAll() {
   renderRutinas();
   renderObjetivos();
   renderTareas();
+  if (typeof renderJapones === 'function') renderJapones();
 }
 window.addEventListener('bitacora:change', renderAll);
 
@@ -400,6 +421,7 @@ function openGoalForm(goalId) {
       <div class="field"><label>Unidad</label><input type="text" id="g-unit" value="${esc(g?.numeric.unit || '')}" placeholder="kg, km, páginas..."></div>`;
     if (type === 'habit') return `<div class="badge-note">Vas a poder marcar este objetivo como "hecho" cada día desde la vista Hoy u Objetivos, y la app te va a llevar la racha de días seguidos.</div>`;
     if (type === 'checklist') return `<div class="field"><label>Pasos (uno por línea)</label><textarea id="g-steps" rows="4" placeholder="Ej: Investigar opciones&#10;Reservar fecha&#10;Confirmar pago">${(g?.checklist.items||[]).map(i=>i.text).join('\n')}</textarea></div>`;
+    if (type === 'japanese') return `<div class="badge-note">Este objetivo abre una sección propia donde vas a poder subir el archivo semanal que te genera Claude (lección + prueba) y revisar Hiragana, Katakana y Kanji por pestañas.</div>`;
     return '';
   }
 
@@ -410,6 +432,7 @@ function openGoalForm(goalId) {
         <button type="button" class="chip ${type==='numeric'?'active':''}" data-type="numeric">Progreso numérico</button>
         <button type="button" class="chip ${type==='habit'?'active':''}" data-type="habit">Hábito diario</button>
         <button type="button" class="chip ${type==='checklist'?'active':''}" data-type="checklist">Lista de pasos</button>
+        <button type="button" class="chip ${type==='japanese'?'active':''}" data-type="japanese">Japonés (programa)</button>
       </div>
     </div>
     <div class="field"><label>Título</label><input type="text" id="g-title" value="${esc(g?.title||'')}" placeholder="Ej: Correr 10km"></div>

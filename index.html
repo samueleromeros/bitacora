@@ -82,6 +82,32 @@
       <div id="goals-list"></div>
     </section>
 
+    <!-- JAPONÉS (se abre desde el objetivo "Japonés") -->
+    <section class="view" id="view-japones">
+      <button class="btn btn-ghost btn-sm" id="jp-back" style="width:auto;margin-bottom:16px;">‹ Volver a Objetivos</button>
+
+      <div class="chip-row" id="jp-main-tabs" style="margin-bottom:18px;">
+        <button class="chip active" data-jptab="programa">Programa</button>
+        <button class="chip" data-jptab="caracteres">Caracteres</button>
+      </div>
+
+      <div id="jp-programa-panel">
+        <input type="file" id="jp-upload-file" accept=".md,.txt,text/markdown,text/plain" style="display:none;">
+        <button class="btn btn-primary" id="jp-upload-btn" style="margin-bottom:16px;">+ Subir semana</button>
+        <div id="jp-weeks-list"></div>
+      </div>
+
+      <div id="jp-caracteres-panel" style="display:none;">
+        <div class="chip-row" id="jp-char-tabs" style="margin-bottom:14px;">
+          <button class="chip active" data-chartab="hiragana">Hiragana</button>
+          <button class="chip" data-chartab="katakana">Katakana</button>
+          <button class="chip" data-chartab="kanji">Kanji</button>
+        </div>
+        <div class="ti-meta" id="jp-char-progress" style="margin-bottom:14px;"></div>
+        <div id="jp-char-grid"></div>
+      </div>
+    </section>
+
     <!-- TAREAS -->
     <section class="view" id="view-tareas">
       <div class="chip-row" id="todo-filter-row" style="margin-bottom:14px;">
@@ -129,6 +155,8 @@
 </div>
 
 <script src="db.js"></script>
+<script src="japanese-data.js"></script>
+<script src="japanese.js"></script>
 <script src="notifications.js"></script>
 <script src="app.js"></script>
 </body>

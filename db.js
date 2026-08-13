@@ -21,7 +21,10 @@ function defaultData() {
       notificationsEnabled: false,
       leadMinutes: 15
     },
-    notifiedLog: []
+    notifiedLog: [],
+    japanese: {
+      weeks: []       // {id, weekNumber, title, objective, level, uploadedAt, rawText, days:[{id,num,title,theory,notaImportante,activity,test,characters:[{char,romaji}],lessonDone,testDone}]}
+    }
   };
 }
 
@@ -227,6 +230,60 @@ const NotifiedLog = {
   }
 };
 
+// ---------- Japonés (programa semanal + caracteres) ----------
+const Japanese = {
+  weeks: () => load().japanese.weeks,
+  getWeek: (id) => load().japanese.weeks.find(w => w.id === id),
+  addWeek: (week) => {
+    const data = load();
+    const w = {
+      id: uid(),
+      weekNumber: week.weekNumber ?? null,
+      title: week.title || 'Semana',
+      objective: week.objective || '',
+      level: week.level || '',
+      uploadedAt: todayISO(),
+      rawText: week.rawText || '',
+      days: (week.days || []).map(d => ({
+        id: uid(),
+        num: d.num,
+        title: d.title || '',
+        theory: d.theory || '',
+        notaImportante: d.notaImportante || '',
+        activity: d.activity || '',
+        test: d.test || '',
+        characters: d.characters || [],
+        lessonDone: false,
+        testDone: false
+      }))
+    };
+    // orden: más reciente (por número de semana, si no hay número por fecha de carga) primero
+    data.japanese.weeks.unshift(w);
+    save();
+    return w;
+  },
+  removeWeek: (id) => {
+    const data = load();
+    data.japanese.weeks = data.japanese.weeks.filter(w => w.id !== id);
+    save();
+  },
+  toggleDay: (weekId, dayId, field) => { // field: 'lessonDone' | 'testDone'
+    const data = load();
+    const w = data.japanese.weeks.find(x => x.id === weekId);
+    if (!w) return;
+    const d = w.days.find(x => x.id === dayId);
+    if (!d) return;
+    d[field] = !d[field];
+    save();
+  },
+  // Set de caracteres (string) que ya aparecieron en algún archivo subido
+  learnedChars: () => {
+    const set = new Set();
+    load().japanese.weeks.forEach(w => w.days.forEach(d => (d.characters || []).forEach(c => set.add(c.char))));
+    return set;
+  }
+};
+
 // ---------- Backup ----------
 const Backup = {
   export: () => JSON.stringify(load(), null, 2),
@@ -242,4 +299,4 @@ const Backup = {
 };
 
 window.DB = { load, save, uid, toISODate, todayISO, dayKeyFromDate, DIAS, DIAS_LARGO,
-  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup };
+  Routines, Schedule, Goals, Todos, Settings, NotifiedLog, Backup, Japanese };

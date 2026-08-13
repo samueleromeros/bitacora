@@ -407,5 +407,43 @@ a { color: var(--sage); }
 }
 .badge-note strong { color: var(--text); }
 
+/* ---------- Japonés: semanas ---------- */
+.jp-week-card { padding: 14px 16px; }
+.jp-week-header { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.jp-week-header h3 { font-family: var(--font-display); font-size: 16px; margin: 0; }
+.jp-days-list { margin-top: 14px; }
+.jp-day-row { border-top: 1px solid var(--border); padding: 12px 0; }
+.jp-day-row:first-child { border-top: none; }
+.jp-day-head { display: flex; align-items: flex-start; gap: 10px; }
+.jp-day-title { font-size: 14.5px; font-weight: 600; }
+.jp-day-row.done .jp-day-title { color: var(--sage); }
+.jp-day-block { margin: 10px 0 0 34px; }
+.jp-day-block p { margin: 4px 0 0; font-size: 13.5px; color: var(--text-muted); line-height: 1.5; white-space: pre-wrap; }
+.jp-block-label {
+  font-family: var(--font-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-muted);
+}
+.jp-test-block { background: var(--gold-bg); border-radius: var(--radius-sm); padding: 10px 12px; margin-top: 10px; }
+.jp-test-block .jp-block-label { color: var(--gold); }
+.jp-test-block .btn { margin-top: 10px; width: auto; }
+
+/* ---------- Japonés: caracteres ---------- */
+.jp-char-group { margin-bottom: 22px; }
+.jp-char-group-label {
+  font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--text-muted); margin-bottom: 8px;
+}
+.char-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.char-cell {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 10px 4px 8px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  color: var(--text-muted);
+}
+.char-cell .cc-char { font-family: var(--font-display); font-size: 20px; color: var(--text); }
+.char-cell .cc-romaji { font-family: var(--font-mono); font-size: 10px; }
+.char-cell.learned { background: var(--sage-bg); border-color: var(--sage); }
+.char-cell.learned .cc-char { color: var(--sage); }
+.char-cell.learned .cc-romaji { color: var(--sage-dim); }
+
 ::-webkit-scrollbar { width: 0; height: 0; }
 :focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
