@@ -12,9 +12,9 @@ function uid() {
 function defaultData() {
   return {
     version: 1,
-    routines: [],          // {id, name, tipo, color, exercises:[{id,name,sets,reps,notes,days:['lun','jue',...]}]}
+    routines: [],          // {id, name, tipo, color, restSeconds, exercises:[{id,name,sets,reps,notes,days:['lun','jue',...],bothSides:false}]}
     dateOverrides: {},      // {'2026-08-15': 'rest'} — marca un día puntual como descanso, pisando lo que tocaría ese día
-    exerciseLog: {},        // {'2026-08-15': {exerciseId: seriesCompletadas, ...}}
+    exerciseLog: {},        // {'2026-08-15': {exerciseId: {count, side}, ...}} — side: lados ya hechos del set en curso (solo relevante si bothSides)
     goals: [],              // {id, title, type, description, targetDate, numeric:{}, habit:{}, checklist:{}}
     todos: [],               // {id, title, date, time, done, reminder, notified}
     settings: {
@@ -67,6 +67,17 @@ function load() {
         }
       });
       _cache._migratedExerciseLogCount = true;
+      save();
+    }
+    // migración única: exerciseLog guardaba un número por ejercicio (solo conteo); pasa a {count, side} para soportar ejercicios de "ambos lados"
+    if (!_cache._migratedExerciseLogSides) {
+      Object.keys(_cache.exerciseLog || {}).forEach(isoDate => {
+        const dayObj = _cache.exerciseLog[isoDate];
+        Object.keys(dayObj).forEach(exId => {
+          if (typeof dayObj[exId] === 'number') dayObj[exId] = { count: dayObj[exId], side: 0 };
+        });
+      });
+      _cache._migratedExerciseLogSides = true;
       save();
     }
     // migración única: el viejo objetivo "japonés" (global, un solo programa para toda la app) pasa a
@@ -142,7 +153,8 @@ function sanitizeExercises(exercises) {
     sets: ex.sets,
     reps: ex.reps,
     notes: ex.notes || '',
-    days: Array.isArray(ex.days) ? ex.days : []
+    days: Array.isArray(ex.days) ? ex.days : [],
+    bothSides: !!ex.bothSides // si se hace de a dos lados/extremidades: cada "serie" requiere completar ambos antes de contar
   }));
 }
 const Routines = {
@@ -150,7 +162,11 @@ const Routines = {
   get: (id) => load().routines.find(r => r.id === id),
   add: (routine) => {
     const data = load();
-    const r = { id: uid(), name: routine.name, tipo: routine.tipo || 'fuerza', color: routine.color || '#9CAF88', exercises: sanitizeExercises(routine.exercises) };
+    const r = {
+      id: uid(), name: routine.name, tipo: routine.tipo || 'fuerza', color: routine.color || '#9CAF88',
+      restSeconds: routine.restSeconds != null && routine.restSeconds !== '' ? Number(routine.restSeconds) : 60,
+      exercises: sanitizeExercises(routine.exercises)
+    };
     data.routines.push(r);
     save();
     return r;
@@ -160,6 +176,7 @@ const Routines = {
     const r = data.routines.find(x => x.id === id);
     if (!r) return;
     if (patch.exercises) patch.exercises = sanitizeExercises(patch.exercises);
+    if (patch.restSeconds != null) patch.restSeconds = Number(patch.restSeconds) || 0;
     Object.assign(r, patch);
     save();
   },
@@ -200,7 +217,7 @@ const Schedule = {
 };
 
 // ---------- Registro de series completadas por ejercicio y por día (para la sesión de "Hoy") ----------
-// exerciseLog[isoDate][exerciseId] = cantidad de series ya completadas ese día
+// exerciseLog[isoDate][exerciseId] = { count: series completas, side: lados hechos del set en curso (0 o 1, solo si el ejercicio es "ambos lados") }
 function parseSetsCount(setsText) {
   if (!setsText) return 1;
   const m = String(setsText).match(/\d+/);
@@ -209,25 +226,50 @@ function parseSetsCount(setsText) {
   return n > 0 ? n : 1;
 }
 const ExerciseLog = {
-  getCount: (isoDate, exId) => (load().exerciseLog[isoDate] || {})[exId] || 0,
+  getEntry: (isoDate, exId) => (load().exerciseLog[isoDate] || {})[exId] || { count: 0, side: 0 },
+  getCount: (isoDate, exId) => ExerciseLog.getEntry(isoDate, exId).count,
+  getSide: (isoDate, exId) => ExerciseLog.getEntry(isoDate, exId).side,
   isDone: (isoDate, exId, totalSets) => ExerciseLog.getCount(isoDate, exId) >= (totalSets || 1),
-  // Suma una serie completada (usado al terminar el cronómetro de una serie); no supera el total
-  incrementSet: (isoDate, exId, totalSets) => {
+  // Avanza un "lado" (o una serie entera si bothSides=false). Con bothSides=true, recién al completar el 2do lado suma la serie.
+  incrementProgress: (isoDate, exId, totalSets, bothSides) => {
     const data = load();
     if (!data.exerciseLog[isoDate]) data.exerciseLog[isoDate] = {};
     const max = totalSets || 1;
-    const cur = data.exerciseLog[isoDate][exId] || 0;
-    data.exerciseLog[isoDate][exId] = Math.min(cur + 1, max);
+    const cur = Object.assign({ count: 0, side: 0 }, data.exerciseLog[isoDate][exId]);
+    if (bothSides) {
+      if (cur.side === 0) {
+        cur.side = 1;
+      } else {
+        cur.side = 0;
+        cur.count = Math.min(cur.count + 1, max);
+      }
+    } else {
+      cur.count = Math.min(cur.count + 1, max);
+    }
+    data.exerciseLog[isoDate][exId] = cur;
     save();
-    return data.exerciseLog[isoDate][exId];
+    return cur;
+  },
+  // Revierte el último avance (corrección manual)
+  decrementProgress: (isoDate, exId, bothSides) => {
+    const data = load();
+    if (!data.exerciseLog[isoDate] || !data.exerciseLog[isoDate][exId]) return;
+    const cur = data.exerciseLog[isoDate][exId];
+    if (bothSides) {
+      if (cur.side === 1) cur.side = 0;
+      else if (cur.count > 0) { cur.count -= 1; cur.side = 1; }
+    } else if (cur.count > 0) {
+      cur.count -= 1;
+    }
+    save();
   },
   // Toggle manual (botón sello): si no está completo del todo, lo completa; si ya estaba completo, lo reinicia a 0
   toggleFull: (isoDate, exId, totalSets) => {
     const data = load();
     if (!data.exerciseLog[isoDate]) data.exerciseLog[isoDate] = {};
     const max = totalSets || 1;
-    const cur = data.exerciseLog[isoDate][exId] || 0;
-    data.exerciseLog[isoDate][exId] = cur >= max ? 0 : max;
+    const cur = Object.assign({ count: 0, side: 0 }, data.exerciseLog[isoDate][exId]);
+    data.exerciseLog[isoDate][exId] = cur.count >= max ? { count: 0, side: 0 } : { count: max, side: 0 };
     save();
   }
 };
@@ -415,8 +457,8 @@ function seedDefinicionRoutines() {
   if (data.routines.length) return; // ya hay rutinas, no tocar nada
   const TIPO_COLORS = { fuerza: '#9CAF88', cardio: '#C2665A', core: '#7FA0C9', movilidad: '#B487C2', otro: '#D4A73C' };
   const mk = (name, tipo, day, exercises) => ({
-    id: uid(), name, tipo, color: TIPO_COLORS[tipo],
-    exercises: exercises.map(e => ({ id: uid(), name: e[0], sets: e[1], reps: e[2], days: [day] }))
+    id: uid(), name, tipo, color: TIPO_COLORS[tipo], restSeconds: 60,
+    exercises: exercises.map(e => ({ id: uid(), name: e[0], sets: e[1], reps: e[2], days: [day], bothSides: false }))
   });
   data.routines.push(
     mk('Tren Superior', 'fuerza', 'lun', [

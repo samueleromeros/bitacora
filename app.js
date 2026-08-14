@@ -156,9 +156,11 @@ function hoySessionCardHTML(routine, exercises, iso) {
       <h3 style="margin-top:6px;">${esc(routine.name)}</h3>
       ${exercises.map((ex, i) => {
         const total = DB.parseSetsCount(ex.sets);
-        const count = DB.ExerciseLog.getCount(iso, ex.id);
+        const entry = DB.ExerciseLog.getEntry(iso, ex.id);
         const done = statuses[i];
-        const progress = total > 1 && !done ? ` · serie ${Math.min(count, total)}/${total}` : '';
+        let progress = '';
+        if (!done && total > 1) progress = ` · serie ${Math.min(entry.count, total)}/${total}`;
+        if (!done && ex.bothSides && entry.side === 1) progress += ' (falta 2do lado)';
         return `<div class="exercise-row" style="${done?'color:var(--text-muted);text-decoration:line-through;':''}"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}${progress}</span></div>`;
       }).join('') || '<div class="exercise-row"><span>Sin ejercicios cargados</span></div>'}
       ${!allDone && exercises.length ? '<div class="ti-meta" style="margin-top:8px;color:var(--sage);">Tocá para completar ▸</div>' : ''}
@@ -174,7 +176,7 @@ function routineCardHTML(r, exercises, showDays) {
     <div class="rc-body">
       <span class="goal-type-badge" style="margin-bottom:6px;">${esc(t.label)}</span>
       <h3>${esc(r.name)}</h3>
-      ${list.map(ex => `<div class="exercise-row"><span>${esc(ex.name)}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}${showDays && ex.days && ex.days.length ? ' · ' + esc(formatDays(ex.days)) : ''}</span></div>`).join('') || '<div class="exercise-row"><span>Sin ejercicios cargados</span></div>'}
+      ${list.map(ex => `<div class="exercise-row"><span>${esc(ex.name)}${ex.bothSides ? ' (2 lados)' : ''}</span><span>${esc(ex.sets||'')}×${esc(ex.reps||'')}${showDays && ex.days && ex.days.length ? ' · ' + esc(formatDays(ex.days)) : ''}</span></div>`).join('') || '<div class="exercise-row"><span>Sin ejercicios cargados</span></div>'}
     </div>
   </div>`;
 }
@@ -187,24 +189,35 @@ function renderExercisesForDay(dayAssign, iso) {
   return groupItemsByRoutine(dayAssign.items).map(g => hoySessionCardHTML(g.routine, g.exercises, iso)).join('');
 }
 
-// ================= Sesión de entrenamiento (checklist + cronómetro por serie) =================
+// ================= Sesión de entrenamiento (checklist + cronómetro por serie + descanso) =================
 function openWorkoutSession(routine, exercises, iso) {
-  const timers = {}; // exId -> intervalId
+  const timers = {};       // exId -> intervalId (cronómetro de una serie/lado)
+  let restTimerId = null;  // intervalId del descanso entre series/ejercicios
+  const restSeconds = routine.restSeconds != null ? routine.restSeconds : 60;
 
   function rowHTML(ex) {
     const total = DB.parseSetsCount(ex.sets);
-    const count = DB.ExerciseLog.getCount(iso, ex.id);
-    const done = count >= total;
+    const entry = DB.ExerciseLog.getEntry(iso, ex.id);
+    const done = entry.count >= total;
     const durationSec = parseDurationSeconds(ex.reps) || parseDurationSeconds(ex.sets);
-    const nextSet = Math.min(count + 1, total);
+    const onSecondSide = ex.bothSides && entry.side === 1;
+    const sideLabel = ex.bothSides ? (onSecondSide ? ' · lado 2/2' : ' · lado 1/2') : '';
+    const serieLabel = (total > 1 || ex.bothSides) ? ` · serie ${Math.min(entry.count, total)}/${total}` : '';
     return `<div class="card" data-ex-row="${ex.id}" style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
       <button class="stamp ${done?'done':''}" data-action="session-toggle" data-id="${ex.id}" data-total="${total}" aria-label="Marcar hecho">${stampSVG()}</button>
       <div style="flex:1;min-width:0;">
-        <div style="${done?'text-decoration:line-through;color:var(--text-muted);':''}">${esc(ex.name)}</div>
-        <div class="ti-meta">${esc(ex.sets||'')}×${esc(ex.reps||'')}${total>1 ? ` · serie ${Math.min(count,total)}/${total}` : ''}</div>
+        <div style="${done?'text-decoration:line-through;color:var(--text-muted);':''}">${esc(ex.name)}${ex.bothSides ? ' <span class="ti-meta" style="font-size:11px;">(2 lados)</span>' : ''}</div>
+        <div class="ti-meta">${esc(ex.sets||'')}×${esc(ex.reps||'')}${!done ? serieLabel + sideLabel : ''}</div>
         ${durationSec && !done ? `<div data-timer-box="${ex.id}" style="margin-top:6px;font-family:var(--font-mono);font-size:20px;color:var(--gold);">${durationSec}s</div>` : ''}
       </div>
-      ${durationSec && !done ? `<button class="btn btn-ghost btn-sm" data-action="session-timer-start" data-id="${ex.id}" data-seconds="${durationSec}" data-total="${total}">▶ serie ${nextSet}/${total}</button>` : ''}
+      ${!done
+        ? (durationSec
+            ? `<button class="btn btn-ghost btn-sm" data-action="session-timer-start" data-id="${ex.id}" data-seconds="${durationSec}" data-total="${total}" data-bothsides="${ex.bothSides?1:0}">▶ ${onSecondSide ? 'lado 2' : (ex.bothSides ? 'lado 1' : 'iniciar')}</button>`
+            : `<div style="display:flex;flex-direction:column;gap:4px;align-items:stretch;">
+                 <button class="btn btn-ghost btn-sm" data-action="session-manual-add" data-id="${ex.id}" data-total="${total}" data-bothsides="${ex.bothSides?1:0}">+1 ${onSecondSide ? 'lado 2' : (ex.bothSides ? 'lado 1' : 'serie')}</button>
+                 <button class="btn btn-ghost btn-sm" data-action="session-manual-sub" data-id="${ex.id}" data-bothsides="${ex.bothSides?1:0}" style="font-size:11px;padding:4px;">-1</button>
+               </div>`)
+        : ''}
     </div>`;
   }
 
@@ -214,7 +227,31 @@ function openWorkoutSession(routine, exercises, iso) {
     root.querySelector('#session-progress').textContent = `${doneCount}/${exercises.length} completados`;
   }
 
-  function startTimerForRow(root, exId, seconds, setsTotal) {
+  function startRest(root) {
+    if (!restSeconds) return; // 0 = sin descanso configurado
+    if (restTimerId) clearInterval(restTimerId);
+    let remaining = restSeconds;
+    const bar = root.querySelector('#session-rest');
+    const timeEl = root.querySelector('#session-rest-time');
+    bar.style.display = 'flex';
+    timeEl.textContent = `${remaining}s`;
+    restTimerId = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(restTimerId);
+        restTimerId = null;
+        bar.style.display = 'none';
+        return;
+      }
+      timeEl.textContent = `${remaining}s`;
+    }, 1000);
+  }
+  function skipRest(root) {
+    if (restTimerId) { clearInterval(restTimerId); restTimerId = null; }
+    root.querySelector('#session-rest').style.display = 'none';
+  }
+
+  function startTimerForRow(root, exId, seconds, setsTotal, bothSides) {
     if (timers[exId]) clearInterval(timers[exId]);
     let remaining = seconds;
     const box = () => root.querySelector(`[data-timer-box="${exId}"]`);
@@ -227,8 +264,12 @@ function openWorkoutSession(routine, exercises, iso) {
         delete timers[exId];
         remaining = 0;
         render();
-        DB.ExerciseLog.incrementSet(iso, exId, setsTotal);
+        const before = DB.ExerciseLog.getEntry(iso, exId);
+        DB.ExerciseLog.incrementProgress(iso, exId, setsTotal, bothSides);
+        const after = DB.ExerciseLog.getEntry(iso, exId);
         drawList(root);
+        // solo descansa cuando se cerró una serie completa (no tras el 1er lado de un ejercicio "2 lados")
+        if (after.count > before.count) startRest(root);
         return;
       }
       render();
@@ -237,11 +278,16 @@ function openWorkoutSession(routine, exercises, iso) {
 
   openModal(`
     <h2>${esc(routine.name)}</h2>
-    <div class="ti-meta" id="session-progress" style="margin-bottom:12px;"></div>
+    <div class="ti-meta" id="session-progress" style="margin-bottom:10px;"></div>
+    <div id="session-rest" class="card" style="display:none;align-items:center;justify-content:space-between;margin-bottom:12px;border-left:3px solid var(--gold);">
+      <div>Descanso · <span id="session-rest-time" style="font-family:var(--font-mono);color:var(--gold);"></span></div>
+      <button class="btn btn-ghost btn-sm" id="session-rest-skip">Saltar</button>
+    </div>
     <div id="session-list"></div>
     <div class="btn-row" style="margin-top:14px;"><button class="btn btn-primary" id="session-close">Listo</button></div>
   `, (root) => {
     drawList(root);
+    root.querySelector('#session-rest-skip').addEventListener('click', () => skipRest(root));
     root.querySelector('#session-list').addEventListener('click', (e) => {
       const toggleBtn = e.target.closest('[data-action="session-toggle"]');
       if (toggleBtn) {
@@ -252,11 +298,28 @@ function openWorkoutSession(routine, exercises, iso) {
       }
       const startBtn = e.target.closest('[data-action="session-timer-start"]');
       if (startBtn) {
-        startTimerForRow(root, startBtn.dataset.id, Number(startBtn.dataset.seconds), Number(startBtn.dataset.total));
+        startTimerForRow(root, startBtn.dataset.id, Number(startBtn.dataset.seconds), Number(startBtn.dataset.total), startBtn.dataset.bothsides === '1');
+        return;
+      }
+      const addBtn = e.target.closest('[data-action="session-manual-add"]');
+      if (addBtn) {
+        const exId = addBtn.dataset.id;
+        const before = DB.ExerciseLog.getEntry(iso, exId);
+        DB.ExerciseLog.incrementProgress(iso, exId, Number(addBtn.dataset.total), addBtn.dataset.bothsides === '1');
+        const after = DB.ExerciseLog.getEntry(iso, exId);
+        drawList(root);
+        if (after.count > before.count) startRest(root);
+        return;
+      }
+      const subBtn = e.target.closest('[data-action="session-manual-sub"]');
+      if (subBtn) {
+        DB.ExerciseLog.decrementProgress(iso, subBtn.dataset.id, subBtn.dataset.bothsides === '1');
+        drawList(root);
       }
     });
     root.querySelector('#session-close').addEventListener('click', () => {
       Object.values(timers).forEach(id => clearInterval(id));
+      if (restTimerId) clearInterval(restTimerId);
       closeModal();
     });
   });
@@ -494,8 +557,9 @@ window.addEventListener('bitacora:change', renderAll);
 
 // ================= Formularios: RUTINA =================
 function openRoutineForm(routineId) {
-  const r = routineId ? DB.Routines.get(routineId) : { name: '', tipo: 'fuerza', exercises: [] };
-  let exRows = (r.exercises.length ? r.exercises.map(ex => ({ ...ex, days: ex.days || [] })) : [{id: DB.uid(), name:'', sets:'', reps:'', days: []}]);
+  const r = routineId ? DB.Routines.get(routineId) : { name: '', tipo: 'fuerza', restSeconds: 60, exercises: [] };
+  const initialRest = r.restSeconds != null ? r.restSeconds : 60;
+  let exRows = (r.exercises.length ? r.exercises.map(ex => ({ ...ex, days: ex.days || [], bothSides: !!ex.bothSides })) : [{id: DB.uid(), name:'', sets:'', reps:'', days: [], bothSides: false}]);
 
   function exerciseRowsHTML() {
     return exRows.map((ex, i) => `
@@ -509,6 +573,9 @@ function openRoutineForm(routineId) {
         <div class="chip-row" style="margin-top:6px;">
           ${DOW_MON_FIRST.map((dk, di) => `<button type="button" class="chip ${(ex.days||[]).includes(dk)?'active':''}" style="padding:4px 9px;font-size:11.5px;" data-ex-day="${i}" data-day="${dk}">${DOW_MON_LABEL[di]}</button>`).join('')}
         </div>
+        <div style="margin-top:6px;">
+          <button type="button" class="chip ${ex.bothSides?'active':''}" style="padding:4px 9px;font-size:11.5px;" data-ex-sides="${i}">↔ Se hace de ambos lados / extremidades</button>
+        </div>
       </div>`).join('');
   }
 
@@ -520,8 +587,14 @@ function openRoutineForm(routineId) {
         ${TIPOS.map(t => `<button type="button" class="chip ${t.key===r.tipo?'active':''}" data-tipo="${t.key}" style="${t.key===r.tipo?`background:${t.color}22;border-color:${t.color};color:${t.color};`:''}">${esc(t.label)}</button>`).join('')}
       </div>
     </div>
+    <div class="field"><label>Descanso entre series y ejercicios</label>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input type="number" id="rt-rest" min="0" step="5" value="${initialRest}" style="max-width:90px;">
+        <span class="ti-meta">segundos (0 = sin descanso)</span>
+      </div>
+    </div>
     <div class="field"><label>Ejercicios</label>
-      <div class="badge-note" style="margin-bottom:10px;">Elegí en qué día (o días) de la semana hacés cada ejercicio — así aparece solo ese día en Hoy y en el Calendario.</div>
+      <div class="badge-note" style="margin-bottom:10px;">Elegí en qué día (o días) de la semana hacés cada ejercicio, y si corresponde marcá "ambos lados" para los que se hacen de a un lado/extremidad por vez — así la serie recién cuenta como hecha al completar los dos.</div>
       <div id="rt-exercises">${exerciseRowsHTML()}</div>
       <button class="btn btn-ghost btn-sm" type="button" id="rt-add-exercise">+ Agregar ejercicio</button>
     </div>
@@ -551,7 +624,7 @@ function openRoutineForm(routineId) {
 
     root.querySelector('#rt-add-exercise').addEventListener('click', () => {
       syncExFromDOM();
-      exRows.push({ id: DB.uid(), name: '', sets: '', reps: '', days: [] });
+      exRows.push({ id: DB.uid(), name: '', sets: '', reps: '', days: [], bothSides: false });
       root.querySelector('#rt-exercises').innerHTML = exerciseRowsHTML();
     });
     root.querySelector('#rt-exercises').addEventListener('click', (e) => {
@@ -563,6 +636,14 @@ function openRoutineForm(routineId) {
         const set = new Set(exRows[idx].days || []);
         if (set.has(day)) set.delete(day); else set.add(day);
         exRows[idx].days = Array.from(set);
+        root.querySelector('#rt-exercises').innerHTML = exerciseRowsHTML();
+        return;
+      }
+      const sidesChip = e.target.closest('[data-ex-sides]');
+      if (sidesChip) {
+        syncExFromDOM();
+        const idx = Number(sidesChip.dataset.exSides);
+        exRows[idx].bothSides = !exRows[idx].bothSides;
         root.querySelector('#rt-exercises').innerHTML = exerciseRowsHTML();
         return;
       }
@@ -578,7 +659,8 @@ function openRoutineForm(routineId) {
       syncExFromDOM();
       const name = root.querySelector('#rt-name').value.trim();
       if (!name) { root.querySelector('#rt-name').focus(); return; }
-      const payload = { name, tipo: selectedTipo, color: tipoInfo(selectedTipo).color, exercises: exRows.filter(x => x.name.trim()) };
+      const restSeconds = Math.max(0, Number(root.querySelector('#rt-rest').value) || 0);
+      const payload = { name, tipo: selectedTipo, color: tipoInfo(selectedTipo).color, restSeconds, exercises: exRows.filter(x => x.name.trim()) };
       if (routineId) DB.Routines.update(routineId, payload);
       else DB.Routines.add(payload);
       closeModal();
