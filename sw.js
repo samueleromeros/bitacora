@@ -1,5 +1,5 @@
 // sw.js — Service worker: guarda la app para uso offline y muestra notificaciones.
-const CACHE_NAME = 'bitacora-v6';
+const CACHE_NAME = 'bitacora-v7';
 const SHELL = [
   './',
   './index.html',
@@ -30,17 +30,17 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  // Red primero: si hay conexión, siempre trae la versión más nueva y actualiza el caché.
+  // Solo usa lo guardado si falla la red (offline). Así una actualización se ve apenas se abre
+  // la app con conexión, sin depender de que el navegador "note" que sw.js cambió.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request).then((response) => {
-        if (response && response.status === 200) {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      }).catch(() => cached);
-      return cached || network;
-    })
+    fetch(event.request).then((response) => {
+      if (response && response.status === 200) {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+      }
+      return response;
+    }).catch(() => caches.match(event.request))
   );
 });
 
